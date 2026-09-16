@@ -1,5 +1,39 @@
 # 구현 검증 기록
 
+## v0.2.0 운영·보안·데이터 확장 검증
+
+검증일: 2026-09-16. 현재 환경은 **macOS arm64, Go 1.26.5**다. 아래 Windows/다른 Go 버전 결과는 이전 작업의 이력이며 이번 실행 결과로 해석하지 않는다.
+
+[요구 문서](reference_docs/운영보안-데이터연계용MCP도구추가.md)를 기준으로 도구 22개를 추가해 총 33개를 등록했다. 기존 이벤트 목록 필터를 확장하고, 기존 이벤트 상세의 무제한 Issue 확장을 호출 없이 unsupported로 변경했다. 스냅샷 저장 가능성이 있는 기존 토픽 목록·그룹 목록·토픽 상세의 annotation도 보완했다. Backend 참조 경로·HEAD·변경 여부는 [API 매핑](api-mapping.md)에 기록했다.
+
+| 검증 | 이번 실행 결과 |
+| --- | --- |
+| `go test ./...` | 통과. 공식 SDK의 전체 33개 발견·엄격한 입력/출력 Schema, 기존 stdio 자식 프로세스·YAML·HTTP·인증 회귀 포함 |
+| `go vet ./...` | 통과 |
+| `go build ./cmd/ableops-kafka-mcp` | 통과 |
+| `go test -race ./internal/ableops ./internal/tools ./internal/config ./internal/localauth ./internal/mcpserver` | 통과. 공유 REST 클라이언트·사용자별 자격증명·도구·설정·인증 동시성 검증 |
+| 기능군별 httptest·SDK | Lag/모니터링 6개, 보안/신청 6개, 이벤트 5개, 데이터 5개 통과 |
+| HTTP 공식 SDK | 33개 발견, 기존 11개와 신규 GET/POST 대표 4개 호출 및 요청별 위임 인증·추적 ID·토큰 비노출 검증 |
+| 샘플·설정 | 기본 비활성·정확 허용 토픽·최대 100건·256 KiB·취소·위치 정밀도·빈 null·본문/키/헤더 제외·YAML/환경 우선순위 통과 |
+| 미리보기 | 고정된 POST 3경로만 호출, 변경/신청/복원/배포/SQL 실행 미호출, ACL 미관측·정책 실패, DDL 인증 옵션 제외와 정적 오류 상태 보존 통과 |
+| 결과 의미 | HTTP200 업무 실패·부분 실패·demo·unknown·단위·시각·상속 false/0·미평가 주의도·페이지/출력 잘림·권한 거부 0건·다른 객체 소속 차단 통과 |
+| 저장소 오류 은닉 | 신청·백업·정책 등 오류 표지가 부족한 결과를 partial로 유지. 빈 목록을 정상 0건으로 확정하지 않는 회귀 통과 |
+| 포맷·패치 | `gofmt -l cmd internal` 출력 없음, `git diff --check` 통과 |
+
+처음에는 샌드박스의 Go 모듈 캐시·로컬 포트 바인딩 제한으로 테스트가 실행되지 않았다. 의존성 다운로드와 로컬 httptest 실행을 허용받고 `GOCACHE=/private/tmp/ableops-mcp-go-cache`로 위 검증을 완료했다. 테스트 실패 과정에서 기존 HTTP 테스트의 11개 도구 가정도 현재 목록·대표 호출에 맞게 갱신했다.
+
+추가 CI 설정은 Windows/Linux에 macOS를 더하고 race 대상에 도구·설정 패키지를 포함한다. 원격 CI 결과와 로컬 결과는 구분한다. 배포 스크립트나 실제 서비스 재시작·배포는 이번 작업에서 실행하지 않았다.
+
+### 실연동·보류·클라이언트 후속
+
+`ABLEOPS_VERIFY_BACKEND`, 실제 `ABLEOPS_API_TOKEN`, 대상 `ABLEOPS_VERIFY_CLUSTER_ID`가 제공되지 않아 운영 Backend 실연동은 수행하지 않았다. 기본 opt-in 통합 테스트는 SKIP이며 합성 httptest 성공을 실제 Kafka/DB 연동 성공으로 보고하지 않는다. Backend 저장소는 종료 확인 시에도 같은 HEAD와 clean 상태다.
+
+Backend 계약 때문에 보류한 12개는 접근 재검토·감사검색, 카탈로그·거버넌스 리포트, Flink 작업 목록/상세·파이프라인 목록/상세·ES 검사, Issue 상세·알림 발송 이력, 기존 복원 계획 조회다. 상세 근거와 재개 요건은 [보안](security-tools.md), [이벤트](event-tools.md), [데이터](data-tools.md)에 있다. 전역 API 사후 필터, 새 복원 계획 생성, 기본 클러스터 대체로 우회하지 않았다.
+
+MCP 클라이언트는 신규 22개 도구 허용목록, 이벤트 필터, 선택 Issue 미지원 처리와 입력 Schema를 갱신해야 한다. `partial/errors/limitations/truncated`, 원본 업무 상태·단위·관측 시각·demo/unknown과 실제 annotation을 보존해야 하며 메시지 원문·실행 가능한 전체 DDL을 기대하면 안 된다. 해당 클라이언트는 수정하지 않았다.
+
+## 이전 검증 이력
+
 검증일: 2026-09-16. 환경: Windows amd64 / PowerShell, Git 2.53.0.windows.1.
 
 ## YAML 실행 설정 추가 검증

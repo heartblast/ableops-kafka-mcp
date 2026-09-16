@@ -121,15 +121,18 @@ func (c *Client) ListClusterEvents(ctx context.Context, id string, filter EventF
 	if filter.PageSize != 0 {
 		q.Set("pageSize", strconv.Itoa(filter.PageSize))
 	}
-	for key, values := range map[string][]string{"status": filter.Status, "severity": filter.Severity, "category": filter.Category} {
+	for key, values := range map[string][]string{"status": filter.Status, "severity": filter.Severity, "category": filter.Category, "attention": filter.Attention, "eventCode": filter.EventCode} {
 		for _, value := range values {
 			q.Add(key, value)
 		}
 	}
-	for key, value := range map[string]string{"search": filter.Search, "from": filter.From, "to": filter.To} {
+	for key, value := range map[string]string{"search": filter.Search, "from": filter.From, "to": filter.To, "resourceType": filter.ResourceType, "resourceId": filter.ResourceID, "module": filter.Module, "assignedTo": filter.AssignedTo, "sort": filter.Sort} {
 		if value != "" {
 			q.Set(key, value)
 		}
+	}
+	if filter.ExcludeSynthetic {
+		q.Set("excludeSynthetic", "true")
 	}
 	if err := c.getCluster(ctx, id, []string{"events"}, q, &out); err != nil {
 		return out, err

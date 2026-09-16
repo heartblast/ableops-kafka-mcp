@@ -72,12 +72,12 @@ func TestBackendLive(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), cfg.Timeout)
 			defer cancel()
 			inventory, err := cs.ListTools(ctx, nil)
-			if err != nil || inventory == nil || len(inventory.Tools) != 11 {
+			if err != nil || inventory == nil || len(inventory.Tools) != 33 {
 				t.Fatal("공식 SDK 도구 목록 조회 실패")
 			}
 			for _, tool := range inventory.Tools {
-				if tool.Annotations == nil || !tool.Annotations.ReadOnlyHint {
-					t.Fatal("읽기 전용 도구 속성 누락")
+				if tool.Annotations == nil || tool.Annotations.DestructiveHint == nil || *tool.Annotations.DestructiveHint {
+					t.Fatal("비파괴 도구 속성 누락")
 				}
 			}
 		})

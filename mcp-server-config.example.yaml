@@ -24,3 +24,9 @@ auth:
   token_env: 'ABLEOPS_API_TOKEN'
 logging:
   level: info
+message_sample:
+  # 메시지 본문·키·헤더는 활성화해도 공개하지 않습니다. 위치 메타데이터만 전달합니다.
+  enabled: false
+  # 정확한 클러스터/토픽 조합만 허용하며 와일드카드를 지원하지 않습니다.
+  # 예: ['synthetic-dev/orders']
+  allowed_topics: []

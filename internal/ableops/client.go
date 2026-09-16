@@ -26,7 +26,7 @@ const (
 	MaxConcurrentRequests = 4
 )
 
-// Client는 동시 사용이 가능하며 애플리케이션 재시도 없이 GET 요청만 전송한다.
+// Client는 동시 사용이 가능하며 자동 재시도 없이 조회와 허용된 미리보기만 전송한다.
 type Client struct {
 	baseURL            url.URL
 	token              string
@@ -34,6 +34,8 @@ type Client struct {
 	timeout            time.Duration
 	httpClient         *http.Client
 	semaphore          chan struct{}
+	sampleEnabled      bool
+	sampleTopics       map[string]bool
 }
 
 // NewClient는 설정을 검증하고 TLS 인증서를 검증하는 클라이언트를 생성한다.
@@ -64,6 +66,10 @@ func NewClient(cfg config.Config) (*Client, error) {
 	transport.MaxResponseHeaderBytes = 64 << 10
 	baseURL := *cfg.BaseURL
 	baseURL.Path = ""
+	sampleTopics := make(map[string]bool, len(cfg.SampleTopics))
+	for _, topic := range cfg.SampleTopics {
+		sampleTopics[topic] = true
+	}
 	return &Client{
 		baseURL:            baseURL,
 		token:              cfg.Token,
@@ -75,7 +81,9 @@ func NewClient(cfg config.Config) (*Client, error) {
 			// 같은 출처도 포함해 모든 리다이렉트를 차단하고 토큰 전달을 방지한다.
 			CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse },
 		},
-		semaphore: make(chan struct{}, MaxConcurrentRequests),
+		semaphore:     make(chan struct{}, MaxConcurrentRequests),
+		sampleEnabled: cfg.SampleEnabled,
+		sampleTopics:  sampleTopics,
 	}, nil
 }
 
@@ -124,6 +132,11 @@ func (c *Client) GetOptional(ctx context.Context, segments []string, query url.V
 }
 
 func (c *Client) get(ctx context.Context, segments []string, query url.Values, out any, optional bool) error {
+	return c.request(ctx, http.MethodGet, segments, query, nil, out, optional, MaxResponseBytes, false)
+}
+
+// request는 고정 API 메서드만 사용하는 내부 전송부다. 도구 인자로 URL·헤더를 받지 않는다.
+func (c *Client) request(ctx context.Context, method string, segments []string, query url.Values, bodyBytes []byte, out any, optional bool, maxBytes int64, allowNull bool) error {
 	if err := reserveOperationRequest(ctx); err != nil {
 		return err
 	}
@@ -166,7 +179,7 @@ func (c *Client) get(ctx context.Context, segments []string, query url.Values, o
 	if err := ctx.Err(); err != nil {
 		return requestError(ctx, err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL.String(), nil)
+	req, err := http.NewRequestWithContext(ctx, method, requestURL.String(), bytes.NewReader(bodyBytes))
 	if err != nil {
 		return publicError("invalid_request", 0)
 	}
@@ -175,6 +188,9 @@ func (c *Client) get(ctx context.Context, segments []string, query url.Values, o
 		req.Header.Set("X-Request-ID", p.RequestID)
 	}
 	req.Header.Set("Accept", "application/json")
+	if bodyBytes != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return requestError(ctx, err)
@@ -186,11 +202,11 @@ func (c *Client) get(ctx context.Context, segments []string, query url.Values, o
 	if optional && resp.StatusCode == http.StatusNoContent {
 		return errNoContent
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, MaxResponseBytes+1))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
 	if err != nil {
 		return requestError(ctx, err)
 	}
-	if len(body) > MaxResponseBytes {
+	if int64(len(body)) > maxBytes {
 		return publicError("response_too_large", resp.StatusCode)
 	}
 	// 큰 정수의 정밀도를 보존하며 해석한 키와 값을 검사한다.
@@ -205,7 +221,7 @@ func (c *Client) get(ctx context.Context, segments []string, query url.Values, o
 	if err := decoder.Decode(&trailing); err != io.EOF {
 		return publicError("invalid_response", resp.StatusCode)
 	}
-	if inspected == nil || bytes.Contains(body, []byte(token)) || containsToken(inspected, token) ||
+	if (inspected == nil && !allowNull) || bytes.Contains(body, []byte(token)) || containsToken(inspected, token) ||
 		(p.MCPToken != "" && (bytes.Contains(body, []byte(p.MCPToken)) || containsToken(inspected, p.MCPToken))) {
 		return publicError("invalid_response", resp.StatusCode)
 	}

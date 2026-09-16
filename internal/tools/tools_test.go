@@ -109,12 +109,12 @@ func TestToolSchemasAndRequiredTargets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(listed.Tools) != 11 {
+	if len(listed.Tools) != 33 {
 		t.Fatalf("도구 수=%d", len(listed.Tools))
 	}
 	for _, tool := range listed.Tools {
-		if tool.InputSchema == nil || tool.OutputSchema == nil || tool.Annotations == nil || !tool.Annotations.ReadOnlyHint {
-			t.Fatalf("스키마/조회 전용 표기 누락: %s", tool.Name)
+		if tool.InputSchema == nil || tool.OutputSchema == nil || tool.Annotations == nil {
+			t.Fatalf("스키마/부작용 표기 누락: %s", tool.Name)
 		}
 		for _, definition := range []any{tool.InputSchema, tool.OutputSchema} {
 			raw, err := json.Marshal(definition)

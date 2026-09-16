@@ -212,7 +212,7 @@ func sdkHTTPSession(t *testing.T, server *httptest.Server, token string) *mcp.Cl
 	return session
 }
 
-func TestSDKHTTPInitializationAndElevenTools(t *testing.T) {
+func TestSDKHTTPInitializationAndRepresentativeTools(t *testing.T) {
 	var calls atomic.Int32
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
@@ -243,6 +243,23 @@ func TestSDKHTTPInitializationAndElevenTools(t *testing.T) {
 			io.WriteString(w, `{"clusterId":"c1","center":"TOPIC:orders","view":"full","depth":1,"nodes":[{"id":"TOPIC:orders","type":"TOPIC","label":"orders"}],"edges":[],"syncedAt":"2026-09-16T00:00:00Z"}`)
 		case "/api/requests/r1":
 			io.WriteString(w, `{"requestId":"r1","clusterId":"c1","type":"TOPIC_CREATE","status":"APPROVED","payload":{"topicName":"orders"}}`)
+		case "/api/requests":
+			if r.URL.Query().Get("cluster") != "c1" {
+				t.Error("신청 클러스터 필터 누락")
+			}
+			io.WriteString(w, `[]`)
+		case "/api/clusters/c1/resource-backups":
+			io.WriteString(w, `{"items":[],"total":0,"limit":50,"offset":0}`)
+		case "/api/clusters/c1/acls/plan":
+			if r.Method != http.MethodPost {
+				t.Error("미리보기 POST 누락")
+			}
+			io.WriteString(w, `{"plan":{"generated":[],"toCreate":[],"duplicates":[]},"policy":{"passed":true,"riskLevel":"LOW","violations":[]}}`)
+		case "/api/flink/ddl-preview":
+			if r.Method != http.MethodPost {
+				t.Error("미리보기 POST 누락")
+			}
+			json.NewEncoder(w).Encode(map[string]any{"tableName": "src_orders", "sourceDdl": "CREATE TABLE `src_orders` (\n  `id` STRING\n) WITH (\n 'connector'='kafka'\n);", "validation": map[string]any{"status": "static_ok"}})
 		default:
 			t.Error("예상하지 않은 Backend 경로")
 			http.NotFound(w, r)
@@ -274,10 +291,16 @@ func TestSDKHTTPInitializationAndElevenTools(t *testing.T) {
 	defer server.Close()
 	session := sdkHTTPSession(t, server, syntheticMCPToken)
 	list, err := session.ListTools(context.Background(), nil)
-	if err != nil || len(list.Tools) != 11 {
+	if err != nil || len(list.Tools) != 33 {
 		t.Fatalf("도구 목록 오류: %v", err)
 	}
 	for _, tool := range list.Tools {
+		// 전체 스키마 발견과 기존 도구 회귀, 신규 GET/POST 대표 호출을 HTTP로 검증한다.
+		switch tool.Name {
+		case "list_clusters", "get_cluster_health", "list_topics", "list_consumer_groups", "get_consumer_group_lag", "list_cluster_events", "get_topic_detail", "get_consumer_group_members", "get_event_detail", "get_asset_impact", "get_request_status", "list_requests", "list_resource_backups", "preview_acl_plan", "preview_flink_ddl":
+		default:
+			continue
+		}
 		args := map[string]any{"cluster_id": "c1"}
 		if tool.Name == "list_clusters" {
 			args = map[string]any{}
@@ -294,6 +317,10 @@ func TestSDKHTTPInitializationAndElevenTools(t *testing.T) {
 			args["asset_type"], args["asset_key"] = "TOPIC", "orders"
 		case "get_request_status":
 			args["request_id"] = "r1"
+		case "preview_acl_plan":
+			args["template_key"], args["principal"], args["topic"], args["hosts"] = "consumer", "User:synthetic", "orders", []string{"127.0.0.1"}
+		case "preview_flink_ddl":
+			args["topic_name"], args["table_name"], args["columns"] = "orders", "src_orders", []any{map[string]any{"name": "id", "type": "STRING"}}
 		}
 		result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: tool.Name, Arguments: args})
 		if err != nil {
@@ -307,7 +334,7 @@ func TestSDKHTTPInitializationAndElevenTools(t *testing.T) {
 			t.Fatal("MCP 출력에 토큰 포함")
 		}
 	}
-	if calls.Load() != 12 || authCalls.Load() < 13 {
+	if calls.Load() != 16 || authCalls.Load() < 17 {
 		t.Fatalf("Backend=%d 인증=%d", calls.Load(), authCalls.Load())
 	}
 	if err := session.Close(); err != nil {

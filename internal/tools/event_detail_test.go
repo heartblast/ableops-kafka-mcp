@@ -25,8 +25,6 @@ func TestEventDetailSelectionLimitsAndSafeFields(t *testing.T) {
 				t.Errorf("발생 이력 limit+1 누락: %s", r.URL.RawQuery)
 			}
 			io.WriteString(w, `{"items":[{"id":3,"eventId":"EV-1","isFiring":true},{"id":2,"eventId":"EV-1","isFiring":true},{"id":1,"eventId":"EV-1","isFiring":false}],"total":3}`)
-		case "/api/events/EV-1/issue":
-			io.WriteString(w, `{"issue":{"id":"IS-1","clusterId":"c1","status":"OPEN","attentionLevel":"URGENT"},"actions":[{"reason":"hidden-marker"}]}`)
 		case "/api/event-playbooks/CRITICAL_CONSUMER_LAG":
 			io.WriteString(w, `{"code":"CRITICAL_CONSUMER_LAG","title":"지연 점검","steps":[{"title":"권장 점검","command":"hidden-marker"}]}`)
 		default:
@@ -40,7 +38,7 @@ func TestEventDetailSelectionLimitsAndSafeFields(t *testing.T) {
 	}
 	result := call(t, cs, "get_event_detail", map[string]any{"cluster_id": "c1", "event_id": "EV-1", "include": []string{"occurrences", "issue", "playbook"}, "limit": 2})
 	out := decoded[tools.EventDetailData](t, result)
-	if out.Status != "ok" || result.IsError || !out.Truncated || out.Data.Occurrences.Returned != 2 || out.Data.Occurrences.Received != 3 || !out.Data.Occurrences.HasMore || calls.Load() != 5 || out.Data.Issue.ID != "IS-1" || len(out.Data.Playbook.Steps) != 1 {
+	if out.Status != "partial" || result.IsError || !out.Truncated || out.Data.Occurrences.Returned != 2 || out.Data.Occurrences.Received != 3 || !out.Data.Occurrences.HasMore || calls.Load() != 4 || out.Data.Issue != nil || out.Data.Components.Issue != "unsupported" || len(out.Data.Playbook.Steps) != 1 || len(out.Errors) != 1 || out.Errors[0].Component != "issue" || out.Errors[0].Code != "unsupported" {
 		t.Fatalf("선택 조회/호출 상한: %+v calls=%d", out, calls.Load())
 	}
 	raw, _ := json.Marshal(result)
@@ -86,18 +84,34 @@ func TestEventDetailOptionalFailureEmptyAndUnsupported(t *testing.T) {
 			io.WriteString(w, eventDetailFixture)
 		case "/api/events/EV-1/occurrences":
 			io.WriteString(w, `{"items":[],"total":0}`)
-		case "/api/events/EV-1/issue":
-			w.WriteHeader(http.StatusNoContent)
 		case "/api/event-playbooks/CRITICAL_CONSUMER_LAG":
 			w.WriteHeader(http.StatusForbidden)
 		default:
-			t.Errorf("제한 없는 조치 이력 호출: %s", r.URL.Path)
+			t.Errorf("제한 없는 조치 이력 또는 Issue 관계 호출: %s", r.URL.Path)
 		}
 	})
 	result := call(t, cs, "get_event_detail", map[string]any{"cluster_id": "c1", "event_id": "EV-1", "include": []string{"occurrences", "actions", "issue", "playbook"}})
 	out := decoded[tools.EventDetailData](t, result)
-	if result.IsError || out.Status != "partial" || out.Data.Event.ID != "EV-1" || out.Data.Components.Occurrences != "empty" || out.Data.Components.Issue != "empty" || out.Data.Components.Actions != "unsupported" || out.Data.Components.Playbook != "error" || len(out.Errors) != 2 || calls.Load() != 4 {
+	if result.IsError || out.Status != "partial" || out.Data.Event.ID != "EV-1" || out.Data.Components.Occurrences != "empty" || out.Data.Components.Issue != "unsupported" || out.Data.Components.Actions != "unsupported" || out.Data.Components.Playbook != "error" || len(out.Errors) != 3 || calls.Load() != 3 {
 		t.Fatalf("선택 조회 의미 손실: %+v calls=%d", out, calls.Load())
+	}
+}
+
+func TestEventDetailIssueSelectionDoesNotCallUnboundedEndpoint(t *testing.T) {
+	var calls atomic.Int32
+	cs, _ := connect(t, func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		if r.URL.Path != "/api/events/EV-1" {
+			t.Errorf("제한 없는 Issue API 호출: %s", r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
+		io.WriteString(w, eventDetailFixture)
+	})
+	result := call(t, cs, "get_event_detail", map[string]any{"cluster_id": "c1", "event_id": "EV-1", "include": []string{"issue"}})
+	out := decoded[tools.EventDetailData](t, result)
+	if result.IsError || out.Status != "partial" || out.Data.Event.ID != "EV-1" || out.Data.Issue != nil || out.Data.Components.Issue != "unsupported" || len(out.Errors) != 1 || out.Errors[0].Component != "issue" || out.Errors[0].Code != "unsupported" || calls.Load() != 1 {
+		t.Fatalf("Issue 미지원·기본 상세 보존·호출 상한: %+v calls=%d", out, calls.Load())
 	}
 }
 

@@ -11,7 +11,7 @@ jobs:
   verify:
     strategy:
       matrix:
-        os: [windows-latest, ubuntu-latest]
+        os: [windows-latest, ubuntu-latest, macos-latest]
         go: ['1.25.x', '1.27.x']
     runs-on: ${{ matrix.os }}
     steps:
@@ -36,4 +36,4 @@ jobs:
         if: runner.os == 'Linux'
         env:
           CGO_ENABLED: '1'
-        run: go test -race ./internal/ableops ./internal/localauth ./internal/mcpserver ./cmd/ableops-mcp-auth
+        run: go test -race ./internal/ableops ./internal/tools ./internal/config ./internal/localauth ./internal/mcpserver ./cmd/ableops-mcp-auth

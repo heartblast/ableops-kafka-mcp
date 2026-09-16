@@ -29,13 +29,13 @@ stdio 프로세스는 한 사용자의 Backend 세션 토큰을 환경에서 읽
 
 클러스터 대상 도구는 `cluster_id`가 필수다. 클러스터 목록 캐시를 권한 증명으로 사용하지 않는다. `readOnlyHint`는 클라이언트 안내 메타데이터이며 접근 통제가 아니다. 실제 통제는 Backend의 Bearer 인증 및 도구별 `topic.view`/`event.view`/`acl.view`, 신청의 `canSeeRequest` 객체 권한 검사다. 전역 이벤트·신청 상세는 Backend 객체 접근 통제를 확인한 경로만 사용하고 응답의 소속 클러스터를 추가 대조한다. 불일치하면 상세와 후속 조회를 차단한다. Backend 접근 권한 밖의 결과를 얻기 위한 기본 클러스터 API 우회는 없다.
 
-도구는 GET만 호출한다. 기존 Backend는 인증에 따라 세션 idle 시각을 갱신하고 목록 조회에서 lazy sync를 수행할 수 있다. 따라서 MCP의 조회 전용 범위는 Kafka 변경·신청·승인·명시적 동기화를 제공하지 않는다는 의미다. 기존 Backend의 내부 저장 부작용까지 없다고 보장하지 않는다.
+일반 조회는 GET을 사용하고 ACL·Flink ACL·DDL 미리보기만 확인된 세 POST 경로를 사용한다. 임의 메서드·URL을 받지 않으며 저장·신청·반영·실행 API로 대체하지 않는다. 기존 Backend는 인증에 따라 세션 idle 시각을 갱신하고 목록 조회에서 lazy sync를 수행할 수 있다. 따라서 MCP의 조회 전용 범위는 Kafka 변경·신청·승인·명시적 동기화를 제공하지 않는다는 의미다. 기존 Backend의 내부 저장 부작용까지 없다고 보장하지 않는다.
 
 ## REST 통신 경계
 
 `ABLEOPS_BASE_URL`은 `/api`가 없는 origin이며 클라이언트가 검증된 API 세그먼트를 붙인다. 사용자 입력은 각 경로 세그먼트로 인코딩한다. 임의 URL·메서드·헤더·API 경로 입력 도구는 없다. HTTPS와 인증서 검증을 기본으로 하고 사설 PEM CA를 추가할 수 있다. HTTP는 명시적 허용을 받은 loopback 주소에만 사용한다. 모든 3xx는 차단하여 리다이렉트 대상에 토큰을 전달하지 않는다.
 
-REST 응답은 2 MiB, 동시 호출은 4개, timeout은 1~120초다. `ABLEOPS_REQUEST_TIMEOUT`(기본 15초)은 개별 GET과 여러 GET을 합친 도구 전체에 적용한다. 공통 실행 context는 하위 REST 호출 최대 8회의 안전 상한도 적용하며 각 도구는 문서에 정한 더 작은 고정 호출 수를 따른다. HTTP 요청 자체의 마감 시각이 더 빠르면 그 시각을 따른다. 요청 취소를 HTTP까지 전파하고 자동 재시도는 하지 않는다. 오류에는 안전한 코드·설명·HTTP 상태만 싣고 원문 응답/네트워크 오류는 노출하지 않는다. 백엔드 응답에 세션 토큰이 포함되면 응답을 거부한다. SDK 입력 오류가 잘못된 값을 인용할 수 있으므로 도구 이름·인자에 포함된 설정 토큰도 스키마 검증 전에 차단한다. 공개 DTO는 허용한 측정·설정 필드만 선언하며 임의 evidence/config/payload를 중계하지 않는다.
+REST 응답은 2 MiB, 동시 호출은 4개, timeout은 1~120초다. `ABLEOPS_REQUEST_TIMEOUT`(기본 15초)은 개별 REST와 여러 REST를 합친 도구 전체에 적용한다. 공통 실행 context는 하위 REST 호출 최대 8회의 안전 상한도 적용하며 각 도구는 문서에 정한 더 작은 고정 호출 수를 따른다. HTTP 요청 자체의 마감 시각이 더 빠르면 그 시각을 따른다. 요청 취소를 HTTP까지 전파하고 자동 재시도는 하지 않는다. 오류에는 안전한 코드·설명·HTTP 상태만 싣고 원문 응답/네트워크 오류는 노출하지 않는다. 백엔드 응답에 세션 토큰이 포함되면 응답을 거부한다. SDK 입력 오류가 잘못된 값을 인용할 수 있으므로 도구 이름·인자에 포함된 설정 토큰도 스키마 검증 전에 차단한다. 공개 DTO는 허용한 측정·설정 필드만 선언하며 임의 evidence/config/payload를 중계하지 않는다.
 
 ## 결과 의미와 크기
 
@@ -62,3 +62,13 @@ stdout에는 JSON-RPC만 기록한다. stderr JSON 로그에는 도구명, 클�
 HTTP 요청마다 새 추적 ID를 발급하고 응답 및 Backend 요청의 `X-Request-ID`에 연결한다. 도구 로그에는 검증된 사용자, 로컬 등록에 바인딩된 클라이언트 별칭, 도구, 클러스터, 시간, 결과 코드를 기록한다. 클라이언트 별칭은 토큰 등록 단위 식별자이며 소프트웨어의 신뢰성 증명이 아니다. Backend가 헤더를 감사 저장소에 기록하는 기능은 추가하지 않았다.
 
 별도 인증 서버가 제공되지 않았으므로 OAuth discovery·protected resource metadata·issuer/audience/scope 검증은 구현했다고 주장하지 않는다. 공개 등록 API가 없는 로컬 검증 인증이며 임의 Bearer 설정 클라이언트만 지원한다. 교체 경계는 Authenticate와 Backend 자격증명 해석 함수다. 공용 서비스에는 표준 OAuth 보호 리소스와 사용자 동의·위임/교환, TLS, 중앙 감사 검증이 필요하다. [MCP 전송 규격](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)과 [인증 규격](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization)을 참조한다.
+
+## 운영·보안 도구 확장
+
+등록 도구는 총 33개다. 새 기능군 계약은 [모니터링](monitoring-tools.md)·[보안](security-tools.md)·[이벤트](event-tools.md)·[데이터](data-tools.md)로 분리한다. 전역 API의 클러스터 권한이 부족한 도구는 등록하지 않으며 사후 필터로 보완하지 않는다. 저장소 실패를 숨기는 API의 결과는 partial과 명시적 불확실성으로 보존한다.
+
+샘플 정책은 Client 생성 시 복사한 불변의 허용 목록과 별도 기능 플래그다. 사용자 권한과 별개의 추가 제한이며 요청 context의 위임 인증을 계속 적용한다. 위치 메타데이터만 공개하고 응답 전송 256 KiB·5초의 추가 상한을 둔다. 일반 상세 GET은 null을 거부하지만 샘플 고정 경로의 null은 불확실한 빈 표본이다. DDL 생성 요청은 명시적 컬럼만 사용하며 반환된 컬럼 선언을 대조한 뒤 WITH 옵션 전체를 공개하지 않는다.
+
+신규 도구의 감사·최초 스냅샷 저장은 readOnlyHint=false/idempotentHint=false로 표시한다. annotation은 서버 권한 검사 대신 사용할 수 없다. 기존 이벤트 상세의 무제한 Issue 확장은 이제 호출 없이 unsupported를 반환한다.
+
+기존 `list_topics`, `list_consumer_groups`, `get_topic_detail`도 최초 자산 스냅샷 동기화·저장 가능성이 있어 v0.2.0에서 readOnly/idempotent hint를 false로 보완했습니다. 실제 업무 권한과 조회 동작은 유지합니다. 근거는 Backend `internal/server/clusters.go`, `cluster_scope.go`, `internal/clusters/sync.go`입니다.

@@ -231,12 +231,20 @@ type EventPage struct {
 
 // EventFilters는 실제 핸들러가 지원하는 필터 중 MCP가 공개하는 제한된 부분집합이다.
 type EventFilters struct {
-	Page     int
-	PageSize int
-	Status   []string
-	Severity []string
-	Category []string
-	Search   string
-	From     string
-	To       string
+	Page             int
+	PageSize         int
+	Status           []string
+	Severity         []string
+	Category         []string
+	Search           string
+	From             string
+	To               string
+	Attention        []string
+	EventCode        []string
+	ResourceType     string
+	ResourceID       string
+	Module           string
+	AssignedTo       string
+	Sort             string
+	ExcludeSynthetic bool
 }
