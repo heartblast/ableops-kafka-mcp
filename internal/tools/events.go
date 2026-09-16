@@ -41,7 +41,7 @@ func (s *service) events(ctx context.Context, input EventsInput) Envelope[EventD
 		page = 1
 	}
 	pageSize := limitOrDefault(input.PageSize)
-	result, err := s.client.ListClusterEvents(ctx, input.ClusterID, ableops.EventFilters{Page: page, PageSize: pageSize, Status: input.Status, Severity: input.Severity, Category: input.Category, Search: input.Search, From: input.From, To: input.To})
+	result, err := s.client.ListClusterEvents(ctx, input.ClusterID, ableops.EventFilters{Page: page, PageSize: pageSize, Status: input.Status, Severity: input.Severity, Category: input.Category, Search: input.Search, From: input.From, To: input.To, Attention: input.Attention, EventCode: input.EventCode, ResourceType: input.ResourceType, ResourceID: input.ResourceID, Module: input.Module, AssignedTo: input.AssignedTo, Sort: input.Sort, ExcludeSynthetic: input.ExcludeSynthetic})
 	if err != nil {
 		return failed(out, err, "events")
 	}

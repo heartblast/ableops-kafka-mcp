@@ -27,6 +27,8 @@ type Config struct {
 	AllowHTTP bool
 	// RequireRequestCredentials는 HTTP 요청별 자격증명을 강제하며 공용 토큰을 금지한다.
 	RequireRequestCredentials bool
+	SampleEnabled             bool
+	SampleTopics              []string
 }
 
 // Load는 프로세스 환경변수만 읽으며 .env 파일을 자동으로 불러오지 않는다.
@@ -96,6 +98,18 @@ func loadFrom(getenv func(string) string, requestCredentials bool) (Config, erro
 			return Config{}, errors.New("MCP_LOG_LEVEL must be debug, info, warn, or error")
 		}
 	}
+	if raw := strings.TrimSpace(getenv("ABLEOPS_MESSAGE_SAMPLE_ENABLED")); raw != "" {
+		if raw != "true" && raw != "false" {
+			return Config{}, errors.New("샘플 기능 플래그는 true 또는 false여야 합니다")
+		}
+		cfg.SampleEnabled = raw == "true"
+	}
+	if raw := strings.TrimSpace(getenv("ABLEOPS_MESSAGE_SAMPLE_TOPICS")); raw != "" {
+		cfg.SampleTopics = strings.Split(raw, ",")
+		for i := range cfg.SampleTopics {
+			cfg.SampleTopics[i] = strings.TrimSpace(cfg.SampleTopics[i])
+		}
+	}
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
 	}
@@ -143,6 +157,18 @@ func (c Config) Validate() error {
 	}
 	if c.Timeout < MinTimeout || c.Timeout > MaxTimeout {
 		return errors.New("ABLEOPS_REQUEST_TIMEOUT must be from 1s to 120s")
+	}
+	if len(c.SampleTopics) > 100 {
+		return errors.New("샘플 허용 토픽은 최대 100개입니다")
+	}
+	for _, item := range c.SampleTopics {
+		parts := strings.Split(item, "/")
+		if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" || len(item) > 762 || strings.ContainsAny(item, "*?;,%\x00\r\n\t ") {
+			return errors.New("샘플 허용 토픽은 와일드카드 없는 cluster_id/topic_name 형식이어야 합니다")
+		}
+	}
+	if c.SampleEnabled && len(c.SampleTopics) == 0 {
+		return errors.New("샘플 기능 활성화에는 허용 토픽이 필요합니다")
 	}
 	return nil
 }

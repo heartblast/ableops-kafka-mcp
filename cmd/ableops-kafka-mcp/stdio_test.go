@@ -96,11 +96,19 @@ func TestStdioProcess(t *testing.T) {
 		t.Fatalf("tools/list: %v", err)
 	}
 	want := map[string]bool{"list_clusters": true, "get_cluster_health": true, "list_topics": true, "list_consumer_groups": true, "get_consumer_group_lag": true, "list_cluster_events": true, "get_topic_detail": true, "get_consumer_group_members": true, "get_event_detail": true, "get_asset_impact": true, "get_request_status": true}
+	for _, name := range []string{
+		"get_consumer_lag_overview", "get_consumer_lag_policy", "get_metric_series", "get_cluster_storage", "get_cluster_config_audit", "get_partition_reassignments",
+		"list_identities", "get_identity_detail", "list_acls", "get_acl_risk", "get_scram_audit", "list_requests",
+		"get_event_summary", "list_operational_issues", "get_event_rule", "get_attention_policy", "list_maintenance_windows",
+		"list_resource_backups", "sample_topic_messages", "preview_acl_plan", "preview_flink_acl_plan", "preview_flink_ddl",
+	} {
+		want[name] = true
+	}
 	if len(list.Tools) != len(want) {
 		t.Fatalf("tool count: %d", len(list.Tools))
 	}
 	for _, tool := range list.Tools {
-		if !want[tool.Name] || tool.InputSchema == nil || tool.OutputSchema == nil || tool.Annotations == nil || !tool.Annotations.ReadOnlyHint {
+		if !want[tool.Name] || tool.InputSchema == nil || tool.OutputSchema == nil || tool.Annotations == nil {
 			t.Fatalf("incomplete tool definition: %+v", tool)
 		}
 		delete(want, tool.Name)

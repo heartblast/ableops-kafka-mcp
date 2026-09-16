@@ -42,6 +42,8 @@ type fileConfig struct {
 	storeFile      string
 	tokenEnv       string
 	logLevel       string
+	sampleEnabled  string
+	sampleTopics   []string
 }
 
 // LoadServer는 지정한 파일만 읽으며 프로세스 환경변수를 변경하지 않는다.
@@ -125,10 +127,12 @@ func (f fileConfig) loadBackend(getenv func(string) string, requestCredentials b
 		tokenEnv = "ABLEOPS_API_TOKEN"
 	}
 	defaults := map[string]string{
-		"ABLEOPS_BASE_URL":        f.baseURL,
-		"ABLEOPS_ALLOW_HTTP":      f.allowHTTP,
-		"ABLEOPS_REQUEST_TIMEOUT": f.timeout,
-		"MCP_LOG_LEVEL":           f.logLevel,
+		"ABLEOPS_BASE_URL":               f.baseURL,
+		"ABLEOPS_ALLOW_HTTP":             f.allowHTTP,
+		"ABLEOPS_REQUEST_TIMEOUT":        f.timeout,
+		"MCP_LOG_LEVEL":                  f.logLevel,
+		"ABLEOPS_MESSAGE_SAMPLE_ENABLED": f.sampleEnabled,
+		"ABLEOPS_MESSAGE_SAMPLE_TOPICS":  strings.Join(f.sampleTopics, ","),
 	}
 	return loadFrom(func(key string) string {
 		if key == "ABLEOPS_API_TOKEN" {
@@ -206,7 +210,7 @@ func validTokenEnvName(value string) bool {
 		return false
 	}
 	// 설정 읽기가 토큰 환경변수를 우회 조회하지 않도록 기존 설정 이름을 예약한다.
-	for _, reserved := range []string{"ABLEOPS_BASE_URL", "ABLEOPS_ALLOW_HTTP", "ABLEOPS_REQUEST_TIMEOUT", "ABLEOPS_CA_FILE", "MCP_AUTH_STORE", "MCP_LOG_LEVEL"} {
+	for _, reserved := range []string{"ABLEOPS_BASE_URL", "ABLEOPS_ALLOW_HTTP", "ABLEOPS_REQUEST_TIMEOUT", "ABLEOPS_CA_FILE", "MCP_AUTH_STORE", "MCP_LOG_LEVEL", "ABLEOPS_MESSAGE_SAMPLE_ENABLED", "ABLEOPS_MESSAGE_SAMPLE_TOPICS"} {
 		if strings.EqualFold(value, reserved) {
 			return false
 		}
@@ -299,6 +303,22 @@ func readConfig(path string, getenv func(string) string) (fileConfig, error) {
 		"logging": func(node *yaml.Node) error {
 			return readMapping(node, map[string]func(*yaml.Node) error{
 				"level": stringValue(&cfg.logLevel),
+			})
+		},
+		"message_sample": func(node *yaml.Node) error {
+			return readMapping(node, map[string]func(*yaml.Node) error{
+				"enabled": boolValue(&cfg.sampleEnabled),
+				"allowed_topics": func(node *yaml.Node) error {
+					if err := stringList(&cfg.sampleTopics)(node); err != nil {
+						return err
+					}
+					for _, topic := range cfg.sampleTopics {
+						if strings.Contains(topic, ",") {
+							return errors.New("샘플 허용 토픽의 각 항목에 쉼표를 사용할 수 없습니다")
+						}
+					}
+					return nil
+				},
 			})
 		},
 	})

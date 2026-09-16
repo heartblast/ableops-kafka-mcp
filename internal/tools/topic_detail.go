@@ -38,7 +38,7 @@ func registerTopicMemberTools(server *mcp.Server, s *service) {
 	props["topic_name"] = map[string]any{"type": "string", "minLength": 1, "maxLength": 1024, "description": "대상 토픽 이름"}
 	props["include"] = map[string]any{"type": "array", "maxItems": 2, "uniqueItems": true, "items": map[string]any{"type": "string", "enum": []string{"configs", "partitions"}}, "description": "configs는 기본 응답의 허용된 설정 키를 공개하며 partitions는 라이브 조회 1회를 추가합니다."}
 	schema["required"] = []string{"cluster_id", "topic_name"}
-	register(server, s, "get_topic_detail", "대상 클러스터의 토픽 스냅샷과 소유 메타를 조회합니다. 설정 공개와 라이브 파티션 복제 상태는 include로 선택하며 메시지 본문은 조회하지 않습니다.", schema, func(i TopicDetailInput) string { return i.ClusterID }, s.topicDetail)
+	registerWithAnnotations(server, s, "get_topic_detail", "대상 클러스터의 토픽 스냅샷과 소유 메타를 조회합니다. 설정 공개와 라이브 파티션 복제 상태는 include로 선택하며 메시지 본문은 조회하지 않습니다.", schema, func(i TopicDetailInput) string { return i.ClusterID }, &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: false}, s.topicDetail)
 	register(server, s, "get_consumer_group_members", "대상 클러스터 Consumer Group의 라이브 멤버와 토픽·파티션 할당을 조회합니다. 빈 멤버 목록만으로 그룹의 존재 또는 장애를 판단하지 않습니다.", inputSchema(true, true, false), func(i GroupInput) string { return i.ClusterID }, s.groupMembers)
 }
 

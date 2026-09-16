@@ -2,7 +2,7 @@
 
 ## 분석 기준과 재현 범위
 
-분석·재확인일은 2026-09-16이다. 계약의 기준은 **`D:\golang\go-workspace\kadmin` 로컬 작업본**이며 원격 최신 버전과 혼합하지 않았다.
+분석·재확인일은 2026-09-16이다. 현재 계약의 기준은 **`/Users/seokbong/dev/go-workspace/kafka-control-portal` 로컬 작업본**이며 원격 최신 버전과 혼합하지 않았다. 이전 구현의 참조 경로는 `D:\golang\go-workspace\kadmin`이었고 아래 기존 검증 이력과 구분한다.
 
 - 브랜치: `v1.7.2`
 - 현재 HEAD: `6aead42e70be7dcdd1b701f225a00b5af6eafa4a`
@@ -13,7 +13,7 @@
 - 기본 자동 테스트는 신규 프로젝트의 `httptest`와 공식 SDK 클라이언트만 사용한다. 명시적 실연동 실행 결과와 미검증 범위는 이 문서 끝에 별도로 기록한다.
 - 기존 저장소의 비밀 설정 파일을 읽거나 복사하지 않았다.
 
-실제로 확인한 로컬 파일은 다음과 같다. 이하 경로는 모두 위 `kadmin` 아래 상대 경로다.
+실제로 확인한 로컬 파일은 다음과 같다. 이하 경로는 모두 위 Backend 참조 루트 아래 상대 경로다.
 
 | 목적 | 근거 파일 |
 | --- | --- |
@@ -176,7 +176,7 @@ MCP가 지원하는 쿼리 부분집합은 다음과 같다.
 
 다중 필터는 종류당 최대 20개다. 백엔드는 반복·콤마 문법을 모두 지원하며 알 수 없는 enum은 400이다. URL의 클러스터가 쿼리보다 우선하므로 MCP는 `clusterId` 쿼리를 받거나 보내지 않는다. 미지원 `limit`/`offset`을 보내지 않는다.
 
-백엔드의 추가 필터는 `resourceId`, `module`, `assignedTo`, `resourceType`, `attention`, `eventCode`, `excludeSynthetic`이며 MVP에 노출하지 않는다. 정렬 화이트리스트는 `-lastSeenAt`, `lastSeenAt`, `-firstSeenAt`, `firstSeenAt`, `-severity`, `severity`, `status`, `-status`, `-attention`, `attention`이다. MCP는 기본 정렬을 사용한다.
+v0.2.0에서는 추가 필터 `resourceId`, `module`, `assignedTo`, `resourceType`, `attention`, `eventCode`, `excludeSynthetic`과 정렬을 MCP에 노출한다. 입력 이름과 정렬 화이트리스트·제약은 [이벤트 도구](event-tools.md#기존-이벤트-목록-보완)를 따른다.
 
 공개 항목은 사건 ID, 코드, 기술 심각도, 생명주기 상태, 클러스터·자원 식별자, 제목·요약, 수집 출처 `source`, `dataMode`, `demo`, 발생·관측·해결 시각, 발생 횟수, 지속시간, 주의도 판정 필드와 issue ID다. `attentionLevel`은 기술 심각도와 별개다. `UNEVALUATED`를 정상·관찰로 바꾸지 않는다. `lastSeenAt`은 마지막 발화 감지 시각이며 `lastObservedAt`이 제공되면 발화·정상을 포함한 마지막 관측 시각이다. 이벤트별 시각을 목록 전체의 단일 관측 시각으로 합성하지 않는다.
 
@@ -242,7 +242,7 @@ HTTP 요청마다 MCP가 새 추적 ID를 발급한다. 같은 ID를 MCP 접근 
 | --- | --- | --- | --- |
 | `get_topic_detail` | `/api/clusters/{id}/topics/{name}`; 선택 `/partitions` | 각 핸들러의 `clusterAdapterOr(topic.view)` | 기본 1, 최대 2 |
 | `get_consumer_group_members` | `/api/clusters/{id}/consumer-groups/{name}/members` | `clusterAdapterOr(topic.view)` | 1 |
-| `get_event_detail` | `/api/events/{id}`; 선택 `/occurrences?limit=N`, `/issue?limit=1`, `/api/event-playbooks/{code}` | 상세·이력은 `eventOr`, Issue 연결은 `eventActiveIssue`가 `event.view`와 객체 소속 클러스터 권한 검사. 플레이북은 `eventGate(event.view)` | 기본 1, 최대 4 |
+| `get_event_detail` | `/api/events/{id}`; 선택 `/occurrences?limit=N`, `/api/event-playbooks/{code}` | 상세·이력은 `eventOr`의 객체 권한 검사. 플레이북은 `eventGate(event.view)`. `actions/issue`는 호출 없이 미지원 | 기본 1, 최대 3 |
 | `get_asset_impact` | `/api/clusters/{id}/asset-graph?center=TYPE:key&depth=1..2&view=full&expandStructural=false`; 선택 `/asset-graph/impact?type=TYPE&key=key` | 각 `fetchAssetSnapshot`의 `clusterAdapterOr(acl.view)` | 기본 1, 최대 2 |
 | `get_request_status` | `/api/requests/{id}` | `getRequest`의 `canSeeRequest` 객체 접근 통제 | 1 |
 
@@ -281,7 +281,7 @@ HTTP 요청마다 MCP가 새 추적 ID를 발급한다. 같은 ID를 MCP 접근 
 
 현재 `/events/{id}/actions`는 limit을 읽지 않고 전체 조치 이력을 반환한다. 무제한 이력 조회를 피하기 위해 호출하지 않으며 `include:["actions"]`에 `partial`과 `unsupported`를 반환한다. 기본 이벤트 상태 전이 시각을 조치 이력으로 가장하지 않는다. 제한된 최근 조치 API가 Backend 후속 요건이다.
 
-Issue API의 204는 관계 없음으로 처리한다. 일반 상세 GET의 204는 여전히 잘못된 응답이다. Issue에는 `limit=1`로 함께 반환되는 Issue 조치 이력 비용을 제한하며 공개 DTO는 Issue 요약만 선언한다. 함께 실리는 멤버 목록은 서버 제한이 없어 REST 2 MiB 상한을 적용하고 출력에서 제외한다. 반환된 Issue의 클러스터도 검증한다. 플레이북은 사건의 eventCode로 조회하고 코드 일치를 검사하며 안내·주의사항만 공개하고 실행 명령·링크는 제외한다.
+v0.2.0에서 `include:["issue"]`는 `partial/unsupported`로 반환하며 API를 호출하지 않는다. 재검토 결과 `limit=1`은 조치 이력만 줄이고 Backend의 전체 멤버 조회·멤버별 이벤트 N+1은 제한하지 못한다. 이전 Issue API의 204·소속 검증 클라이언트 계약은 내부 테스트 이력으로 남지만 도구에서 사용하지 않는다. 플레이북은 사건의 eventCode로 조회하고 코드 일치를 검사하며 안내·주의사항만 공개하고 실행 명령·링크는 제외한다.
 
 **자산:** `asset_type`은 Backend 지원 대상인 `TOPIC`, `PRINCIPAL`, `CONSUMER_GROUP`, `asset_key`는 해당 이름/Principal 키다. 집계용 `group:` Principal은 실제 자산 대상으로 허용하지 않는다. `depth`는 기본 1, 최대 2이며 노드별 재귀 GET은 없다. 기본 그래프의 `clusterId`, `center`, `depth`, `view`, 노드 ID, 엣지 source/target/kind를 검증·보존한다. 요청 중심이 없는 비어 있지 않은 응답과 누락 노드로 향하는 엣지는 잘못된 응답으로 거부한다.
 
@@ -300,3 +300,25 @@ Principal 노드의 자격증명 존재·포털 잠금 표식과 ACL 집계 관�
 필수 상세 실패는 data 없는 `error`다. 선택 조회 실패는 확인된 기본 상세를 보존한 `partial`이며, 조회 실패·빈 결과·미지원·미요청을 구분한다. MCP 출력 한계 64 KiB/결과 128 KiB는 REST 전송 상한과 별도이고 잘림을 표시한다. 외부 문자열은 데이터이며 지시로 실행하지 않는다.
 
 새 계약은 `internal/ableops/*_detail_test.go`, `impact_request_test.go`, `operation_test.go`와 `internal/tools`의 대응 테스트에서 합성 DTO로 검증한다. 공식 SDK로 도구 발견·입력/출력 Schema·호출과 기존 stdio/HTTP 전송을 검증한다. 새 도구의 실연동 경로는 `internal/integration/analysis_test.go`에 있고, 이번 작업에서는 토큰·대상 환경변수가 제공되지 않아 실행하지 않았다. 앞 절의 이전 실제 Backend 결과와 구분한다.
+
+
+## v0.2.0 운영·보안·데이터 도구 확장
+
+요구 문서는 [운영보안-데이터연계용MCP도구추가.md](reference_docs/운영보안-데이터연계용MCP도구추가.md)다. 이번 구현은 위 macOS 경로의 `v1.7.2`/HEAD `6aead42e70be7dcdd1b701f225a00b5af6eafa4a` 작업본을 기준으로 했고 참조 시 관련 미커밋 변경은 없다. 기존 Windows 경로의 참조 이력과 같은 HEAD지만 현재 확인 경로를 명시한다. Backend 소스·설정·Git·서비스를 변경하지 않았고 실제 업무 API에 접속하지 않았다.
+
+추가 22개와 기존 11개를 합쳐 **33개**를 등록한다. 요구된 신규 34개 중 나머지 12개는 Backend 권한 또는 조회 계약 제약으로 미등록이다. 도구별 입력·출력 의미·실제 메서드/경로·권한·근거 핸들러·DTO·테스트·질문 예시는 아래 문서를 계약의 일부로 관리한다.
+
+| 기능군 | 추가 수 | 상세 계약·참조 근거 | 보류 |
+| --- | --- | --- | --- |
+| Lag·모니터링 | 6 | [monitoring-tools.md](monitoring-tools.md) | 없음. 클러스터 범위가 확인되지 않는 시계열은 실행 시 차단 |
+| 계정·보안·통제 | 6 | [security-tools.md](security-tools.md) | access reviews, audit search 2개 |
+| 이벤트·운영 정책 | 5 | [event-tools.md](event-tools.md) | Issue 상세, notification deliveries 2개 |
+| 백업·샘플·미리보기·데이터 연계 | 5 | [data-tools.md](data-tools.md) | 카탈로그·거버넌스 2개, Flink/프로젝트/ES 5개, 기존 복원 계획 1개 |
+
+추가 도구는 REST 1회, Issue 목록과 선택 attention profile은 최대 2회다. 무제한 페이지 순회·재귀·자동 재시도를 하지 않는다. 전송과 출력 제한은 기존 Client/Envelope를 재사용한다. REST 클라이언트는 일반 GET 외에 확인된 ACL·Flink ACL·DDL 미리보기 POST 세 경로만 추가했다. 요청 본문은 32 KiB 이하이고 사용자별 인증 context·토큰 검사·redirect 차단·전체 호출 예산을 동일하게 적용한다.
+
+샘플은 별도 기능 플래그·정확한 허용 토픽 정책으로 기본 비활성화하며 위치 메타데이터만 공개한다. 원문 메시지·키·헤더·인증 설정·전체 감사 payload는 공개 DTO에 선언하지 않는다. DDL의 WITH 접속/인증 옵션과 검증 원문도 제외한다. GET 또는 미리보기라도 백엔드 감사·스냅샷 쓰기가 확인된 신규 도구는 `readOnlyHint=false`, `idempotentHint=false`, `destructiveHint=false`로 표시한다. 권한 판정은 항상 Backend가 수행한다.
+
+저장소 실패·어댑터 실패·실측/mock 구분을 응답에서 알 수 없는 기능은 `partial`과 그 한계를 반환한다. 빈 결과를 정상 현황으로 단정하지 않으며 허용 범위가 확인되지 않는 전역 데이터를 사후 필터로 공개하지 않는다. 클라이언트 후속 요건은 도구 허용목록·Schema 갱신과 `status/errors/limitations/truncated`, 업무 상태·시각·단위·데이터 모드 보존이다. MCP 클라이언트는 변경하지 않았다.
+
+기존 `list_topics`, `list_consumer_groups`, `get_topic_detail`도 최초 자산 스냅샷 동기화·저장 가능성이 있어 v0.2.0에서 readOnly/idempotent hint를 false로 보완했습니다. 실제 업무 권한과 조회 동작은 유지합니다. 근거는 Backend `internal/server/clusters.go`, `cluster_scope.go`, `internal/clusters/sync.go`입니다.

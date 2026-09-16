@@ -50,7 +50,7 @@ func registerEventDetailTool(server *mcp.Server, s *service) {
 			"limit": map[string]any{"type": "integer", "minimum": 1, "maximum": MaxLimit, "description": "발생 이력·플레이북 목록 출력 최대 수. 기본 50, 최대 100"},
 		},
 	}
-	register(server, s, "get_event_detail", "지정 클러스터 이벤트의 상태·심각도·주의도·제한된 발생 근거를 조회합니다. 이력·Issue·플레이북은 include로 선택합니다. 조치 이력은 백엔드의 제한 조회 API 부재로 미지원입니다. 권장 조치는 실행 이력이 아닙니다.", schema, func(i EventDetailInput) string { return i.ClusterID }, s.eventDetail)
+	register(server, s, "get_event_detail", "지정 클러스터 이벤트의 상태·심각도·주의도·제한된 발생 근거를 조회합니다. 발생 이력·플레이북은 include로 선택합니다. 조치 이력·Issue 관계는 백엔드의 제한 조회 API 부재로 미지원입니다. 권장 조치는 실행 이력이 아닙니다.", schema, func(i EventDetailInput) string { return i.ClusterID }, s.eventDetail)
 }
 
 func (s *service) eventDetail(ctx context.Context, input EventDetailInput) Envelope[EventDetailData] {
@@ -89,7 +89,7 @@ func (s *service) eventDetail(ctx context.Context, input EventDetailInput) Envel
 		out.Status = "partial"
 		out.Errors = append(out.Errors, failure(err, component))
 	}
-	// 상세 소속 검증 이후에만 조회하며, 페이지 순회 없이 최대 4회 REST로 끝낸다.
+	// 상세 소속 검증 이후에만 조회하며, 페이지 순회 없이 최대 3회 REST로 끝낸다.
 	if include["occurrences"] {
 		page, err := s.client.EventOccurrences(ctx, input.EventID, limit+1)
 		if err != nil {
@@ -113,17 +113,12 @@ func (s *service) eventDetail(ctx context.Context, input EventDetailInput) Envel
 		out.Errors = append(out.Errors, Failure{Component: "actions", Code: "unsupported", Message: "백엔드 조치 이력 API에 서버 측 건수 제한이 없어 조회하지 않았습니다. 제한된 최근 조치 API가 필요합니다."})
 	}
 	if include["issue"] {
-		issue, err := s.client.EventIssue(ctx, input.ClusterID, input.EventID)
-		if err != nil {
-			data.Components.Issue = "error"
-			partFailed("issue", err)
-		} else if issue == nil {
-			data.Components.Issue = "empty"
-		} else {
-			data.Components.Issue = "ok"
-			data.Issue = issue
-		}
-		out.Limitations = append(out.Limitations, "관련 Issue는 요약만 반환합니다. API가 함께 반환하는 멤버·조치·임의 영향 객체는 제외하며 추가 멤버별 조회는 하지 않습니다.")
+		// limit은 조치 이력에만 적용되고, Backend가 전체 멤버별 이벤트를 추가 조회한다.
+		// 응답 DTO를 요약으로 줄여도 서버의 무제한 조회 비용은 줄지 않으므로 호출하지 않는다.
+		data.Components.Issue = "unsupported"
+		out.Status = "partial"
+		out.Errors = append(out.Errors, Failure{Component: "issue", Code: "unsupported", Message: "백엔드 Issue 관계 API가 전체 멤버와 멤버별 이벤트를 제한 없이 조회하므로 호출하지 않았습니다. 요약 전용 또는 멤버 제한 API가 필요합니다."})
+		out.Limitations = append(out.Limitations, "이벤트 본체의 issueId는 저장된 관계 식별자만 제공하며 현재 Issue 상세·상태를 조회한 결과가 아닙니다.")
 	}
 	if include["playbook"] {
 		playbook, err := s.client.EventPlaybook(ctx, event.EventCode)

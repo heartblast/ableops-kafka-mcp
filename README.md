@@ -1,6 +1,6 @@
 # ableops-kafka-mcp
 
-기존 AbleOps Kafka REST API의 **조회 도구 11개를 stdio와 Streamable HTTP로 제공**합니다. stdio는 개인 사용자용이며 기본 전송입니다. HTTP는 사용자별 별도 MCP 토큰을 Backend 세션에 매핑하는 **loopback 전용 개발 검증 모드**입니다. Kafka·DB 직접 연결, 로그인 대행, 변경 도구, LLM·채팅, 공용 OAuth 서비스는 구현하지 않습니다.
+기존 AbleOps Kafka REST API의 **조회·미리보기 도구 33개를 stdio와 Streamable HTTP로 제공**합니다. stdio는 개인 사용자용이며 기본 전송입니다. HTTP는 사용자별 별도 MCP 토큰을 Backend 세션에 매핑하는 **loopback 전용 개발 검증 모드**입니다. Kafka·DB 직접 연결, 로그인 대행, 신청·반영·배포 실행, LLM·채팅, 공용 OAuth 서비스는 구현하지 않습니다.
 
 ## 요구 환경
 
@@ -114,6 +114,8 @@ logging:
 | `ABLEOPS_REQUEST_TIMEOUT` | 기본 `15s`, 허용 `1s`~`120s` |
 | `ABLEOPS_CA_FILE` | 선택. 사설 CA의 PEM 파일 경로. 이 REST 클라이언트의 시스템 CA 목록에 추가하며 OS 신뢰 저장소는 수정하지 않음 |
 | `MCP_LOG_LEVEL` | `debug`, `info`(기본), `warn`, `error` |
+| `ABLEOPS_MESSAGE_SAMPLE_ENABLED` | 기본 `false`. 활성화에는 허용 토픽 필요. 메시지 위치 메타데이터만 반환 |
+| `ABLEOPS_MESSAGE_SAMPLE_TOPICS` | 정확한 `cluster_id/topic_name` 조합의 쉼표 구분 목록. YAML `message_sample.allowed_topics`로도 지정 가능, 와일드카드 금지 |
 | `ABLEOPS_ALLOW_HTTP` | 기본 `false`. `true`이면 `localhost`, `127.0.0.1`, `::1`의 개발용 HTTP만 허용 |
 
 예를 들어 PowerShell에서 아래처럼 토큰을 화면·명령 이력에 출력하지 않고 입력할 수 있습니다. 입력한 토큰은 서버 실행을 위해 해당 PowerShell 프로세스 환경에 저장됩니다.
@@ -167,16 +169,29 @@ $env:ABLEOPS_API_TOKEN = [System.Net.NetworkCredential]::new('', $sessionSecret)
 | `list_cluster_events` | `cluster_id` | 저장된 이벤트의 페이지 조회 |
 | `get_topic_detail` | `cluster_id`, `topic_name` | 토픽 기본·소유 메타. `include:["configs","partitions"]`로 공개 설정·라이브 복제 상태 선택 |
 | `get_consumer_group_members` | `cluster_id`, `group_name` | 멤버·클라이언트·호스트·토픽/파티션 할당 |
-| `get_event_detail` | `cluster_id`, `event_id` | 심각도·주의도·상태·허용된 발생 근거. `include:["occurrences","issue","playbook"]`로 부가 조회 선택 |
+| `get_event_detail` | `cluster_id`, `event_id` | 심각도·주의도·상태·허용된 발생 근거. `include:["occurrences","playbook"]`로 부가 조회 선택 |
 | `get_asset_impact` | `cluster_id`, `asset_type`, `asset_key` | 방향과 관계 유형을 보존한 그래프. `include:["impact"]`로 별도 영향 요약 선택 |
 | `get_request_status` | `cluster_id`, `request_id` | 원본 신청 상태·정책 코드·대상. `include:["history"]`로 최근 상태 이력 공개 |
+
+v0.2.0에서 추가한 22개 도구의 필수 인자·권한·질문 예시·제약은 기능군별 문서에 정리했습니다.
+
+| 기능군 | 추가 도구 | 상세 계약 |
+| --- | --- | --- |
+| Lag·모니터링 | `get_consumer_lag_overview`, `get_consumer_lag_policy`, `get_metric_series`, `get_cluster_storage`, `get_cluster_config_audit`, `get_partition_reassignments` | [모니터링](docs/monitoring-tools.md) |
+| 계정·보안·신청 | `list_identities`, `get_identity_detail`, `list_acls`, `get_acl_risk`, `get_scram_audit`, `list_requests` | [보안·통제](docs/security-tools.md) |
+| 이벤트·정책 | `get_event_summary`, `list_operational_issues`, `get_event_rule`, `get_attention_policy`, `list_maintenance_windows` | [이벤트](docs/event-tools.md) |
+| 백업·샘플·미리보기 | `list_resource_backups`, `sample_topic_messages`, `preview_acl_plan`, `preview_flink_acl_plan`, `preview_flink_ddl` | [데이터·미리보기](docs/data-tools.md) |
+
+샘플은 기본 비활성화하고 허용 토픽의 partition/offset/timestamp만 반환합니다. DDL은 접속·인증 옵션을 생략한 컬럼 선언 조각입니다. 세 미리보기의 POST 경로는 고정하며 신청·반영·SQL 실행·복원을 수행하지 않습니다. 감사·스냅샷을 저장하는 신규 도구는 `readOnlyHint=false`로 표시합니다. `partial`은 Backend의 저장소 실패 표지 부재를 뜻할 수도 있으므로 `errors/limitations`를 함께 읽어야 합니다.
+
+기존 이벤트 목록에 주의도·코드·자원·모듈·담당자·합성 제외·정렬 필터를 추가했습니다. `get_event_detail`의 `include=actions`와 `include=issue`는 Backend의 무제한 이력·멤버 조회 때문에 호출하지 않고 `partial/unsupported`로 반환합니다. 요청된 도구 중 Backend 권한·조회 계약이 부족한 12개는 등록하지 않았으며 위 문서에 보류 사유와 필요한 Backend 변경을 기록했습니다.
 
 목록/상태/Lag 도구의 `limit`은 출력 목록별 기본 50, 최대 100입니다. 백엔드가 전체 목록만 제공하는 API에 가짜 페이지 인자를 보내지 않습니다. 이벤트는 실제 지원되는 `page`(기본 1), `page_size`(기본 50, 최대 100), `status`, `severity`, `category`, `search`, `from`, `to`를 사용합니다. 정확한 입력·출력 JSON Schema는 `tools/list`로 제공합니다.
 
 예: `list_topics`에 `{"cluster_id":"dev-1","limit":20}`, 이벤트에는 `{"cluster_id":"dev-1","page":1,"page_size":20}`을 전달합니다. 누락한 클러스터를 기본 클러스터로 대체하지 않습니다.
 
 - REST 응답 본문은 압축 해제 후 최대 **2 MiB**, 동시 REST 호출은 **4개**입니다. 초과 응답은 오류이며, 일부 JSON만 파싱하여 성공으로 만들지 않습니다.
-- `ABLEOPS_REQUEST_TIMEOUT`은 개별 REST와 **도구 전체**에 적용합니다(기본 15초, 1~120초). 도구당 REST 호출의 공통 안전 상한은 8회이며 새 도구는 실제로 1~4회만 호출합니다. 재귀 조회와 자동 페이지 순회는 하지 않습니다.
+- `ABLEOPS_REQUEST_TIMEOUT`은 개별 REST와 **도구 전체**에 적용합니다(기본 15초, 1~120초). 도구당 REST 호출의 공통 안전 상한은 8회이며 각 도구는 실제로 1~3회만 호출합니다. 샘플은 더 작은 5초·256 KiB 제한을 적용합니다. 재귀 조회와 자동 페이지 순회는 하지 않습니다.
 - 구조화 결과는 최대 **64 KiB**, 동일 JSON의 호환용 텍스트를 포함한 `CallToolResult`는 최대 **128 KiB**입니다. JSON-RPC 포장 크기는 별도입니다. 목록을 줄일 때 `truncated=true`를 반환하며 단일 데이터도 담을 수 없으면 `output_too_large`입니다. stdio 입력 프레임은 64 KiB로 제한합니다.
 - 결과의 `status`는 조회의 `ok`/`partial`/`error`이며 Kafka의 정상 여부와 다릅니다. 측정값·백엔드 판정·`errors`·`limitations`·`truncated`를 함께 확인하세요. 실행 실패는 MCP `isError`로 전달합니다.
 - `queried_at`은 MCP 조회 완료 시각입니다. 스냅샷의 `synced_at`(백엔드 `syncedAt`), 실시간 결과의 `checkedAt`, 이벤트의 `lastSeenAt` 등 백엔드가 제공한 시각만 원본 데이터 시각으로 사용합니다.
@@ -195,7 +210,7 @@ $env:ABLEOPS_API_TOKEN = [System.Net.NetworkCredential]::new('', $sessionSecret)
 | --- | --- |
 | 이 토픽의 설정과 복제 상태는? | `get_topic_detail` — `{"cluster_id":"synthetic-dev","topic_name":"synthetic-orders","include":["configs","partitions"],"limit":20}` |
 | Lag가 큰 파티션을 어떤 Consumer가 맡고 있나? | `get_consumer_group_lag`와 `get_consumer_group_members`에 각각 `{"cluster_id":"synthetic-dev","group_name":"synthetic-readers","limit":20}` |
-| 이 경보의 근거와 최근 조치는? | `get_event_detail` — `{"cluster_id":"synthetic-dev","event_id":"synthetic-event-1","include":["occurrences","actions","issue","playbook"],"limit":10}` |
+| 이 경보의 발생 근거와 대응 안내는? | `get_event_detail` — `{"cluster_id":"synthetic-dev","event_id":"synthetic-event-1","include":["occurrences","playbook"],"limit":10}` |
 | 이 자산에 연결된 대상과 확인 가능한 영향은? | `get_asset_impact` — `{"cluster_id":"synthetic-dev","asset_type":"TOPIC","asset_key":"synthetic-orders","depth":2,"include":["impact"],"limit":30}` |
 | 이 신청은 승인만 됐나, 실제 반영까지 됐나? | `get_request_status` — `{"cluster_id":"synthetic-dev","request_id":"synthetic-request-1","include":["history"],"limit":20}` |
 
@@ -230,3 +245,5 @@ $env:ABLEOPS_VERIFY_GROUP_NAME = 'synthetic-consumer-group'
 대상 예시는 합성 값이므로 승인된 실제 테스트 대상의 환경변수로 바꿉니다. 스크립트는 응답 본문이나 실제 ID를 출력하지 않으며, 필요한 설정이 없는 시나리오는 SKIP으로 남깁니다. 기본 테스트·CI는 실환경에 접속하지 않습니다. 추가 권한·만료·없는 대상 검증 설정은 [검증 기록](docs/verification.md)에 정리합니다.
 
 새 도구의 실연동 대상은 `ABLEOPS_VERIFY_TOPIC_NAME`, `ABLEOPS_VERIFY_GROUP_NAME`, `ABLEOPS_VERIFY_EVENT_ID`, `ABLEOPS_VERIFY_ASSET_TYPE`/`ABLEOPS_VERIFY_ASSET_KEY`, `ABLEOPS_VERIFY_REQUEST_ID`로 각각 주입합니다. 기존 사용자 토큰과 `ABLEOPS_VERIFY_CLUSTER_ID`가 함께 필요합니다. 미제공 대상을 검색하거나 생성하지 않습니다.
+
+기존 `list_topics`, `list_consumer_groups`, `get_topic_detail`도 최초 자산 스냅샷 동기화·저장 가능성이 있어 v0.2.0에서 readOnly/idempotent hint를 false로 보완했습니다. 실제 업무 권한과 조회 동작은 유지합니다. 근거는 Backend `internal/server/clusters.go`, `cluster_scope.go`, `internal/clusters/sync.go`입니다.

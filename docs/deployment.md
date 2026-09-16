@@ -1,6 +1,6 @@
 # ableops-kafka-mcp 배포 및 실행
 
-이 프로젝트는 기존 AbleOps REST API를 호출하여 조회 도구 11개를 제공하는 stdio/로컬 HTTP MCP 서버와 로컬 인증 관리 CLI입니다. 최신 소스로 빌드한 대상 OS와 CPU 아키텍처의 배포 폴더를 복사하면 사용할 수 있으며 **Go 설치는 필요하지 않습니다**. `amd64`는 x64, `arm64`는 ARM64용입니다. 이전에 생성한 `dist` 실행파일에는 이후 소스 변경이 자동 반영되지 않으므로 배포 전 다시 빌드해야 합니다.
+이 프로젝트는 기존 AbleOps REST API를 호출하여 조회·미리보기 도구 33개를 제공하는 stdio/로컬 HTTP MCP 서버와 로컬 인증 관리 CLI입니다. 최신 소스로 빌드한 대상 OS와 CPU 아키텍처의 배포 폴더를 복사하면 사용할 수 있으며 **Go 설치는 필요하지 않습니다**. `amd64`는 x64, `arm64`는 ARM64용입니다. 이전에 생성한 `dist` 실행파일에는 이후 소스 변경이 자동 반영되지 않으므로 배포 전 다시 빌드해야 합니다.
 
 ## 로컬 HTTP 인증 등록과 실행
 
@@ -139,10 +139,12 @@ Write-Host '실행파일 체크섬 확인 완료'
 | `auth.store_file` | `MCP_AUTH_STORE` | HTTP/enroll/revoke의 기존 사용자별 저장소 |
 | `auth.token_env` | 지정한 이름의 환경변수 | 기본 이름 `ABLEOPS_API_TOKEN`, stdio/enroll에서만 읽음 |
 | `logging.level` | `MCP_LOG_LEVEL` | `info`, 기존 debug/info/warn/error |
+| `message_sample.enabled` | `ABLEOPS_MESSAGE_SAMPLE_ENABLED` | boolean `false`, 샘플 위치 메타데이터 조회 활성화 |
+| `message_sample.allowed_topics` | `ABLEOPS_MESSAGE_SAMPLE_TOPICS` | 빈 목록. 정확한 cluster_id/topic_name 조합 최대 100개, 환경변수에서는 쉼표로 구분 |
 
 설정은 **명시 CLI > 비어 있지 않은 기존 환경변수 > YAML > 기존 기본값** 순서다. 비어 있는 환경변수는 YAML 값을 지우지 않는다. 명시한 `--allowed-origins=`는 빈 목록으로 덮어쓴다. `auth.token_env`는 토큰 값의 우선순위가 아닌 읽을 환경변수 이름의 선택이다. 별도 이름을 지정하면 `ABLEOPS_API_TOKEN`으로 대체하지 않는다. HTTP 서버는 선택한 토큰 변수와 공용 Backend 토큰을 읽지 않는다.
 
-`auth.token_env`는 환경변수 이름만 받으며 기존 설정 이름인 `ABLEOPS_BASE_URL`, `ABLEOPS_ALLOW_HTTP`, `ABLEOPS_REQUEST_TIMEOUT`, `ABLEOPS_CA_FILE`, `MCP_AUTH_STORE`, `MCP_LOG_LEVEL`과 대소문자 구분 없이 충돌하면 거부한다. stdio는 HTTP 인증 저장소를 읽거나 그 경로의 환경변수를 확장하지 않는다.
+`auth.token_env`는 환경변수 이름만 받으며 기존 설정 이름인 `ABLEOPS_BASE_URL`, `ABLEOPS_ALLOW_HTTP`, `ABLEOPS_REQUEST_TIMEOUT`, `ABLEOPS_CA_FILE`, `MCP_AUTH_STORE`, `MCP_LOG_LEVEL`, `ABLEOPS_MESSAGE_SAMPLE_ENABLED`, `ABLEOPS_MESSAGE_SAMPLE_TOPICS`와 대소문자 구분 없이 충돌하면 거부한다. stdio는 HTTP 인증 저장소를 읽거나 그 경로의 환경변수를 확장하지 않는다.
 
 YAML의 `ca_file`/`store_file`은 `${ENV_NAME}` 확장을 지원하고 상대 경로를 YAML 디렉터리 기준으로 해석한다. 토큰 변수는 경로 확장에 사용할 수 없다. 미설정/빈 참조 변수는 오류이며 명령 실행, shell 구문, `%VAR%`, `~` 확장은 제공하지 않는다. 환경변수로 직접 지정한 경로는 기존 실행 디렉터리 기준 동작을 유지한다. 프로세스 환경변수를 바꿔 YAML을 적용하지 않는다.
 
@@ -260,4 +262,10 @@ Windows에서는 JSON의 백슬래시를 이스케이프합니다.
 
 예시에는 토큰을 포함하지 않았습니다. 토큰이 자식 프로세스에 전달되지 않으면 설정 오류로 종료합니다. 토큰 만료 시 `authentication_required`를 반환하며 자동 로그인은 수행하지 않습니다. 기존 Backend에서 재인증한 뒤 새 토큰을 주입하고 MCP 프로세스를 재시작하세요. Backend 세션 토큰은 MCP OAuth 토큰이 아닙니다.
 
-연결 후 `tools/list`에서 조회 도구 11개와 입력 스키마를 확인할 수 있습니다. `list_clusters`를 제외한 조회 도구는 `cluster_id`가 필수이며, 매 요청의 권한은 Backend가 판단합니다. 응답의 `status`, `errors`, `limitations`, `truncated`를 함께 확인하세요.
+연결 후 `tools/list`에서 조회·미리보기 도구 33개와 입력 스키마를 확인할 수 있습니다. `list_clusters`를 제외한 조회 도구는 `cluster_id`가 필수이며, 매 요청의 권한은 Backend가 판단합니다. 응답의 `status`, `errors`, `limitations`, `truncated`를 함께 확인하세요.
+
+## v0.2.0 도구 정책
+
+샘플은 활성화와 정확한 토픽 허용 목록이 모두 필요합니다. key/value/header는 활성화해도 공개하지 않으며 원문 전달 옵션은 없습니다. 빈 환경변수는 YAML 목록을 지우지 않으므로 비활성화에는 명시적 false를 사용하세요. 변경 뒤 프로세스 재시작 시 적용됩니다.
+
+추가 도구 허용목록·인자·partial/잘림 처리와 Backend 제약은 [모니터링](monitoring-tools.md), [보안](security-tools.md), [이벤트](event-tools.md), [샘플·미리보기](data-tools.md)를 참고하세요. DDL 결과는 인증 옵션을 제외한 실행 불가능한 컬럼 선언이고 신청·SQL 실행·배포 API는 호출하지 않습니다.
