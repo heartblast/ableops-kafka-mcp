@@ -1,0 +1,26 @@
+# 공개 예제입니다. 환경에 맞게 복사·수정한 뒤 --config로 명시합니다.
+# 실제 토큰·비밀번호·Authorization 헤더는 넣지 않습니다.
+version: 1
+server:
+  transport: http
+  # 로컬 HTTP는 loopback IP만 허용합니다.
+  http_address: '127.0.0.1:8081'
+  # 브라우저에서 사용할 경우 정확한 Origin을 지정합니다.
+  allowed_origins: []
+backend:
+  # /api를 제외한 Backend origin입니다.
+  base_url: 'https://ableops.example.com'
+  # 로컬 http://localhost:8080을 사용할 때만 true로 변경합니다.
+  allow_http: false
+  # 한 도구 전체와 개별 REST 요청의 제한입니다.
+  request_timeout: '15s'
+  # 선택 PEM CA 파일. 상대 경로는 YAML 파일 위치 기준입니다.
+  ca_file: ''
+auth:
+  # 기존 사용자별 인증 저장소입니다. 이 파일이 자동 생성되지는 않습니다.
+  # Windows 예: '${LOCALAPPDATA}/AbleOpsKafkaMCP/local.auth-store.json'
+  store_file: '.secrets/local.auth-store.json'
+  # stdio와 enroll에서 읽는 환경변수 이름입니다. HTTP 서버는 읽지 않습니다.
+  token_env: 'ABLEOPS_API_TOKEN'
+logging:
+  level: info

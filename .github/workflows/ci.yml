@@ -1,0 +1,39 @@
+name: Go
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+        go: ['1.25.x', '1.27.x']
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ matrix.go }}
+          cache: true
+      - run: go mod verify
+      - name: Test, vet and build
+        shell: pwsh
+        run: ./scripts/test.ps1
+      - name: Build deployment files with PowerShell
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/build.ps1
+      - name: Build deployment files with Bash
+        if: runner.os == 'Linux'
+        shell: bash
+        run: bash scripts/build.sh
+      - name: Check authentication and concurrency races
+        if: runner.os == 'Linux'
+        env:
+          CGO_ENABLED: '1'
+        run: go test -race ./internal/ableops ./internal/localauth ./internal/mcpserver ./cmd/ableops-mcp-auth
