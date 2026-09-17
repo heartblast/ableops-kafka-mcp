@@ -36,6 +36,125 @@ MCP 클라이언트는 신규 22개 도구 허용목록, 이벤트 필터, 선�
 
 검증일: 2026-09-16. 환경: Windows amd64 / PowerShell, Git 2.53.0.windows.1.
 
+## OpenAPI 기반 Dynamic MCP 1차 검증
+
+검증일: 2026-09-17. 환경: Windows amd64, Go 1.27.1(go.mod 최소 1.25.0), MCP Go SDK v1.8.0. 요청 문서는 [reference_docs](reference_docs/ableops-kafka-mcp-OpenAPI기반DynamicMCP-1차구현.md), 설계와 차이 기록은 [dynamic-mcp.md](dynamic-mcp.md)에 있다.
+
+> 이 절은 1차 당시의 기록이다. 2차에서 노출 안전 게이트가 생겨 기본 파일럿의 노출 수(2→0)와 E2E 대상 도구가 바뀌었다. 현재 기준은 아래 [2차 검증](#dynamic-mcp-2차-검증)을 본다.
+
+upstream 계약은 kadmin 로컬 작업본(HEAD `6aead42`, OpenAPI 구현 미커밋)에서 만든 `/openapi.json` 스냅샷을 픽스처로 썼다. 출처와 생성 방법은 [api-mapping.md](api-mapping.md#openapi-계약과-dynamic-도구)에 적었다. kadmin의 소스·설정·Git 상태는 바꾸지 않았고, 테스트와 서비스도 실행하지 않았다. 실제 Backend·Kafka·DB에는 접속하지 않았다.
+
+| 검증 대상 | 합성 `httptest`·공식 SDK 결과 |
+| --- | --- |
+| 계약 조회 | 통과. 무인증 GET, ETag 보관, `If-None-Match`→304, 조건 없는 304·204·3xx·401·5xx·크기 초과·토큰 포함·잘못된 ETag 거부, timeout, HTTP 모드(공용 토큰 없음) 적재 |
+| Loader | 통과. 200→304→새 ETag 200→검증 실패·JSON 오류·5xx 때 Last Known Good 유지→복구 후 304. ETag 없는 계약은 매번 무조건 조회 |
+| 계약 파서 | 통과. 실제 계약 31/28/제외 0. 문서 수준 거부(JSON·버전·servers·paths·Operation 0), Operation 단위 제외 20종(중복 ID는 모두 제외), 3.0/3.1 nullable, `$ref` 형제 덮어쓰기·순환·외부 참조 |
+| Compiler·이름 | 통과. snake_case 변환(약어·숫자), path/query·required/optional·nullable·array·enum·default, 실제 JSON Schema 검증기 동작, POST·PUT·PATCH·DELETE·HEAD·본문·비JSON·토큰 이름·RE2 불가 pattern·잘못된 default 거부, 실제 28개 전부 컴파일 |
+| Registry | 통과. 실제 계약 기준 노출 2·shadow 3·Static 충돌 8, 선택 목록·빈 목록·`x-mcp-enabled=false` 선택 경고, 이름 충돌 제외, 등록 경계에서 Static 이름 재차 거부 |
+| Executor | 통과. 조각 단위 인코딩(공백·`/`·`?`·`%`·`#`·한글·`;`·`,`·Principal), `..` 거부, 반복 query·주지 않은 default 미전송, Authorization·위임 토큰, 401/403/404/400/429/500/503, timeout, 원문 보존(키 순서·2^53 초과 정수·`null`·판정 필드 미추가), 선언된 204만 허용, 128 KiB 초과 시 본문 전체 생략, 응답 안 토큰 거부, 로그 비노출 |
+| E2E(in-memory) | 통과. `/openapi.json`→Registry→`tools/list`(Static 11 정의 불변 + 2)→`tools/call`(`get_topic`, `list_events`)→REST→Result. 인자 토큰 차단, 적재 실패 3종에서 Static 11 유지 |
+| Static/Dynamic 병행 | 통과. 비교 서버에서 `list_clusters`·`list_topics`·`list_consumer_groups`·`get_topic`·`list_events` 5개 호출. 같은 REST 경로·인증 확인, 차이(입력 이름·공개 범위·`partial` 판정·큰 정수)를 단언으로 고정 |
+| HTTP 전송 | 통과. SDK Streamable HTTP로 사용자 A/B 동시 호출, 요청별 위임 토큰·추적 ID, 권한 거부 분리, 로그 비노출 |
+| 실제 stdio 자식 프로세스 | 통과. `ABLEOPS_DYNAMIC_TOOLS=true`로 13개 발견·호출, `ABLEOPS_DYNAMIC_OPERATIONS`로 12개, 계약 503일 때 경고 후 11개. stdout JSON-RPC 전용, 토큰·응답 원문 로그 비노출 |
+| 설정 | 통과. 기본 비활성, 환경변수>YAML>기본값, 빈 목록 의미, 잘못된 값 거부(값 비노출), 토큰 변수 이름 예약, 등록 CLI 호환, 공개 예제 YAML 로드 |
+
+새 테스트 함수는 47개다. 기존 테스트 파일은 수정하지 않았다(기존 stdio·HTTP·도구 수 11개 단언 그대로 통과).
+
+`go test -count=1 ./...`, `go vet ./...`, `go mod verify`, `go build ./cmd/ableops-kafka-mcp`, `go build ./cmd/ableops-mcp-auth`, `scripts/test.ps1`이 모두 통과했다. gofmt 미적용 파일은 없다. CI의 `-race` 대상에 `internal/openapi`, `internal/dynamic`을 추가했다. 다만 이 Windows 환경에는 cgo용 gcc가 없어 race 검사는 **로컬에서 실행하지 못했다**(CI Linux에서 실행된다). 배포 빌드 스크립트(`build.ps1`/`build.sh`)는 이번에 다시 실행하지 않았다. 루트의 `ableops-kafka-mcp.exe`·`ableops-mcp-auth.exe`는 검증 빌드로 갱신되었고, 기본 설정에서는 Dynamic이 꺼져 있다.
+
+미검증: 실제 AbleOps Backend의 `/openapi.json`과 Dynamic 도구 실연동(토큰·대상 미제공), 대형 클러스터에서의 64 KiB 초과 빈도, 인코딩된 `/`가 든 경로의 Backend 해석.
+
+## Dynamic MCP 2차 검증
+
+검증일: 2026-09-17(구현·검증) / 2026-09-18(v0.2.0 통합 후 재검증). 환경: Windows amd64, Go 1.27.1(go.mod 최소 1.25.0), MCP Go SDK v1.8.0. 요청 문서는 [reference_docs](reference_docs/DynamicMCP2차운영안정화개발.md), 설계는 [dynamic-mcp.md](dynamic-mcp.md)에 있다. kadmin의 소스·설정·Git 상태는 바꾸지 않았고 kadmin 서비스를 실행하지 않았다.
+
+이 작업은 Static 도구 11개 시점에 구현했고, 이후 원격 `main`의 v0.2.0(운영·보안·데이터 도구 22개 추가, 총 33개) 위로 rebase해 재검증했다. 통합에서 바뀐 것은 다음과 같다.
+
+- Static 이름 충돌 8 → 11(`get_consumer_lag_overview`·`get_event_summary`·`list_requests` 추가). 세 도구의 호환성 선언을 새로 작성했다.
+- SAFE 3개 중 `getEventSummary`가 Static 이름과 겹쳐 기본 노출은 2개(`get_branding`·`get_topic_partitions`)다.
+- 도구 이름 예약은 v0.2.0이 도입한 `registerWithAnnotations` 한 곳에서 모으므로 신규 22개도 자동으로 보호된다.
+- v0.2.0의 일부 Static 도구는 스냅샷 부작용 때문에 `readOnlyHint=false`다. 프로세스 테스트의 도구 정의 점검을 Dynamic 도구에만 적용하도록 고쳤다.
+
+| 검증 대상 | 결과 |
+| --- | --- |
+| Runtime Refresh | 통과. 200 새 계약, 304(Registry 포인터 유지·재생성 없음), ETag만 변경(알림 없음), timeout, 500, invalid JSON, invalid contract(`servers`), 빈 `paths`, 빌드 실패. 실패 뒤에도 서비스 중 계약의 ETag로 조건부 조회. ETag 없는 계약은 매번 전체 조회. 최초 적재 실패 후 다음 갱신에서 복구 |
+| Registry Swap | 통과. 추가·삭제·정의 변경·동일·빌드 실패. 일부 Operation 미지원 시 그 Operation만 제외. upstream 회수(`x-mcp-enabled=false`) 시 제거. 정의는 같고 바인딩만 바뀐 경우 실제 REST 호출이 새 바인딩을 따름(`s=a&s=b`→`s=a%2Cb`, 선언된 204 처리) |
+| Notifications | 통과. 도구 목록 변경 시 `notifications/tools/list_changed` 수신(1회 이상, SDK 변경 호출 수 이하), 304·실패·ETag만 변경·정의 동일 시 0회. SDK 기본(2026-07-28, `subscriptions/listen` 자동 구독)과 legacy(2025-11-25) 클라이언트 모두 |
+| Concurrent Call | 통과. 교체 40회 동안 `tools/list` 4개·`tools/call` 6개 고루틴이 동시에 실행돼도 부분 목록·A/B 혼합 정의가 보이지 않았다. 두 계약에 모두 있는 도구 호출은 실패하지 않았고 panic도 없었다. CI Linux `-race` 대상(`internal/dynamic`·`internal/mcpserver`·`internal/openapi`)이다 |
+| 서버 수준 종료 기준 | 통과. Static 33개와 함께 Registry A(35개) → 304·잘못된 계약에서 A 유지·기존 도구 호출 → Registry B(34개, 회수·설명 변경) → 알림 → Static 정의 바이트 동일. HTTP(stateless)에서는 교체 중 호출이 깨지지 않고 다음 `tools/list`에 반영 |
+| Safety Gate | 통과. upstream 28개 전부 분류(SAFE 3·SHADOW 18·BLOCKED 7, 배치는 노출 2·shadow 19·blocked 7). BLOCKED > Static 충돌 > SAFE 우선순위, 잘못된 분류 값→BLOCKED, 미분류→SHADOW, SAFE 검토 후 경로·파라미터 변경→SHADOW. 기본 서버는 SAFE만 등록하고 비교 서버에도 BLOCKED는 없음 |
+| Compatibility | 통과. Static 이름 충돌 11개 모두 COMPATIBLE 아님(INPUT·OUTPUT·SEMANTIC 전부, SECURITY 7개). 입력 스키마 기계 비교(이름·필수·타입·enum·const·범위·배수·길이·pattern·배열·추가 속성), 결과 봉투 비교, 호출 Operation 구성 비교 |
+| 설정 | 통과. `refresh_interval` 기본 5m, 환경변수>YAML>기본값, 공백 환경변수 무시, 1m 미만·24h 초과·0·음수·단위 없음·정수 YAML·null·중복 거부(값 비노출), 토큰 변수 이름 예약, 등록 CLI 호환, 공개 예제 로드 |
+| Loader | 통과. 호출자 검증 실패 시 계약·ETag 미커밋, 304에서 검증 콜백 미호출, 다음 조회는 기존 ETag 사용 |
+| 실제 stdio 자식 프로세스 | 통과. 기본 파일럿은 노출 0(33개)과 노출 제외 사유 로그, SAFE 선택 시 35개 발견·호출(경로 공백 인코딩·2^53 초과 정수 원문), 계약 503에서 경고 후 33개·stdin 종료로 정상 종료, 잘못된 갱신 주기에서 기동 거부. stdout JSON-RPC 전용 |
+
+새 테스트 함수는 23개다.
+
+- 수정한 1차 테스트는 노출 게이트 도입으로 기대값이 바뀐 것들이다: 기본 파일럿 노출 2→0, E2E 대상 `get_topic`·`list_events`→SAFE 도구, 비교 서버에서 `list_clusters` 제외, 등록 경계 테스트 입력을 Static 충돌 목록으로 명시.
+- 실행기·선택 로직 테스트에는 게이트와 무관하게 확인하도록 "전부 SAFE" 분류를 주입했다.
+
+`go test -count=1 ./...`(하위 테스트 포함 555개), `go vet ./...`, `go mod verify`, `go build ./cmd/ableops-kafka-mcp`, `go build ./cmd/ableops-mcp-auth`, `scripts/test.ps1`이 모두 통과했다. gofmt 미적용 파일은 없다.
+
+### 리뷰와 회귀 방지 확인
+
+5개 관점(동시성, LKG·ETag, 노출·보안, 설정·호환, 테스트 품질)으로 적대적 리뷰를 했고, 발견마다 반박 검증을 거쳤다.
+
+- 반박된 항목은 설계 의도이거나 도달할 수 없는 오용 경로였다. 예를 들어 최초 적재가 기동을 timeout만큼 늦추는 것은 문서화된 절충이다.
+- 확정되었거나 근거가 분명한 결함은 다음 네 가지이며 모두 고쳤다.
+  - 304 뒤 Registry 유지 여부를 단언하지 않음
+  - 알림 "정확히 1회" 단언이 고부하에서 흔들림 → "1회 이상·호출 수 이하"로 바꾸고 문서에 최선 노력으로 명시
+  - 재바인딩 테스트가 실제 호출을 확인하지 않음
+  - 동시성 테스트의 1초 timeout과 블로킹 알림 핸들러
+- 비용이 작은 강화도 함께 넣었다.
+  - SAFE 판정을 검토 시점의 경로·파라미터에 고정
+  - 호환성 비교 키워드 보강
+  - 주기를 갱신 완료 시점부터 계산
+
+`go test -overlay`로 구현을 일부러 망가뜨린 변형 4종을 넣어 보았고, 새 테스트가 모두 실패로 잡았다.
+
+| 변형 | 잡은 테스트 |
+| --- | --- |
+| 재바인딩 제거 | `TestRuntimeRebindsWithoutNotification` |
+| 304에서 Registry 재생성 | `TestRuntimeHotReloadLifecycle` |
+| SAFE 고정 해제 | `TestExposureSafePolicyDrift` |
+| `const` 비교 제거 | `TestCompareInputSchemas` |
+
+불안정성도 확인했다. 12 CPU에서 테스트 프로세스 14개를 동시에 돌리고(`-count=3`, `-cpu 1,4`), 따로 `-count=8`로 반복했다. Runtime·서버 수준 테스트가 모두 통과했다.
+
+### 실제 Backend 검증
+
+사용자가 로컬에서 실행 중이던 kadmin 개발 빌드(`http://localhost:8080`, `version: dev`)를 `scripts/verify-backend.ps1`로 확인했다. 사용자 토큰은 제공되지 않았다.
+
+| 항목 | 결과 |
+| --- | --- |
+| `/healthz`·`/readyz` | HTTP 200 |
+| `/openapi.json` 조회·검증 | 통과. 발견 31, `x-mcp-enabled=true` 28, 제외 0, 정책표 밖 Operation 없음 |
+| ETag·`If-None-Match` 304 | 통과 |
+| Registry 생성과 Runtime 재조회 | 통과. 등록 가능 28, SAFE 선택 시 노출 3. 두 번째 Refresh는 `not_modified` |
+| `tools/list` | 통과. 14개(Static 11 + Dynamic 3) |
+| Dynamic `tools/call` | `get_branding`(미인증 공개): HTTP 200, 원문 JSON 455바이트 |
+| 인증 전달 | 합성 무효 토큰으로 Dynamic `get_event_summary`(당시 노출) 호출 시 Backend가 401 → `authentication_required`. Static `list_clusters`도 401 |
+| 계약 대조 | 실제 계약(322,426바이트)과 픽스처는 Operation·메서드·경로·`x-mcp-enabled`가 같았다. 설명·note·일부 응답 선언은 이전 버전이었다(예: `getEventIssue`의 204 미선언). 보관한 실제 계약 사본으로 다시 분류해도 SAFE 3·SHADOW 18·BLOCKED 7이고, SAFE 고정값도 일치했다 |
+
+**미검증**:
+
+- 인증에 성공한 Dynamic 호출, 즉 사용자 토큰으로 `get_topic_partitions`가 실제 JSON을 반환하는 경로. 토큰과 대상 클러스터·토픽이 제공되지 않았다.
+- 실제 Backend에서 계약이 바뀌는 순간의 Hot Reload.
+- 사내 배포 환경(`edu-cluster1-04`). 이 PC에서 DNS가 조회되지 않았다.
+- 리뷰 반영과 v0.2.0 통합 뒤의 실연동 재실행. 로컬 Backend가 종료되어 있었고, kadmin 서비스는 이 저장소 규칙상 직접 실행하지 않았다. 보관한 실제 계약 사본으로 분류만 다시 확인했다.
+
+인증 경로는 다음과 같이 재현할 수 있다.
+
+```powershell
+$env:ABLEOPS_BASE_URL = 'http://localhost:8080'
+$env:ABLEOPS_API_TOKEN = '<본인 세션 토큰>'
+$env:ABLEOPS_VERIFY_CLUSTER_ID = '<클러스터 ID>'
+$env:ABLEOPS_VERIFY_TOPIC_NAME = '<토픽 이름>'
+.\scripts\verify-backend.ps1
+```
+
+`-race`는 이 Windows 환경에 cgo용 gcc가 없어 **로컬에서 실행하지 못했다**(CI Linux에서 실행된다). 배포 빌드 스크립트(`build.ps1`/`build.sh`)는 `dist/` 산출물을 덮어쓰므로 다시 실행하지 않았다. 루트의 `ableops-kafka-mcp.exe`는 `scripts/test.ps1`의 검증 빌드로 갱신되었다.
+
 ## YAML 실행 설정 추가 검증
 
 [실행 프롬프트](reference_docs/ableops-kafka-mcp-YAML설정지원.md)를 작성하고 서버와 인증 관리 CLI에 명시적 `--config`를 구현했다. 로컬 `mcp-server-config.yaml`은 Backend `http://localhost:8080`, HTTP 수신 `127.0.0.1:8081`, 기존 Windows 사용자별 인증 저장소 경로를 지정한다. 실제 토큰을 YAML에 넣지 않으며 HTTP에서는 공용 Backend 토큰 환경변수를 읽지 않는다. 환경변수·플래그 방식도 유지한다.

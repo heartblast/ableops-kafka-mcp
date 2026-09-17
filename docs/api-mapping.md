@@ -322,3 +322,59 @@ Principal 노드의 자격증명 존재·포털 잠금 표식과 ACL 집계 관�
 저장소 실패·어댑터 실패·실측/mock 구분을 응답에서 알 수 없는 기능은 `partial`과 그 한계를 반환한다. 빈 결과를 정상 현황으로 단정하지 않으며 허용 범위가 확인되지 않는 전역 데이터를 사후 필터로 공개하지 않는다. 클라이언트 후속 요건은 도구 허용목록·Schema 갱신과 `status/errors/limitations/truncated`, 업무 상태·시각·단위·데이터 모드 보존이다. MCP 클라이언트는 변경하지 않았다.
 
 기존 `list_topics`, `list_consumer_groups`, `get_topic_detail`도 최초 자산 스냅샷 동기화·저장 가능성이 있어 v0.2.0에서 readOnly/idempotent hint를 false로 보완했습니다. 실제 업무 권한과 조회 동작은 유지합니다. 근거는 Backend `internal/server/clusters.go`, `cluster_scope.go`, `internal/clusters/sync.go`입니다.
+
+## OpenAPI 계약과 Dynamic 도구
+
+분석일 2026-09-17. 계약의 기준은 `D:\golang\go-workspace\kadmin` 로컬 작업본의 **미커밋 OpenAPI 구현**이다. 원격 버전과 섞지 않았다.
+
+- 브랜치 `v1.7.2`, HEAD `6aead42e70be7dcdd1b701f225a00b5af6eafa4a`(앞 절과 같다).
+- 관련 미커밋 변경:
+  - 추적되지 않은 파일: `internal/openapi/`, `internal/server/openapi.go`, `internal/server/openapi_contract_test.go`, `internal/server/openapi_test.go`, `internal/server/routes_openapi.go`, `.claude/context/OpenAPI계약.md`
+  - 수정된 파일: `internal/server/routes.go`, `internal/server/testdata/routes.golden`
+- 읽은 근거: `.claude/context/OpenAPI계약.md`(MCP 인계 계약 §8), `internal/openapi/spec.go`(문서 조립·`servers[0].url="/"`), `internal/openapi/testdata/contract.golden`(31개 Operation 표면), `internal/server/openapi.go`(미인증·ETag·`If-None-Match`→304·`Cache-Control: no-cache`).
+- Backend 소스·설정·Git 상태를 바꾸지 않았고, 해당 저장소의 테스트와 서비스를 실행하지 않았다.
+
+### 테스트 픽스처
+
+`internal/openapi/testdata/ableops-openapi.json`(344,201바이트, SHA-256 `44153ea991289ec2f4bdff034989160d88eeb40e90da571626ea8fb061871986`)은 upstream `GET /openapi.json` 본문의 스냅샷이다. kadmin의 `internal/openapi` 비테스트 소스를 세션 임시 디렉터리에 복사해 만들었다. 이때 `buildinfo`만 같은 상수(`ProductName`)의 스텁으로 바꾸고 내장 뷰어 `ui.go`는 제외했다. 그다음 `openapi.Build(Options{Version: "fixture"})`의 `JSON()` 결과를 저장했다. 서버 핸들러는 `DefaultJSON()`(빌드 버전)을 쓰므로 실제 응답과는 `info.version`만 다르다.
+
+upstream 계약이 바뀌면 같은 방법으로 다시 만들고 다음을 함께 확인한다.
+
+- `internal/openapi`·`internal/dynamic`·`internal/mcpserver` 테스트의 개수 단언(31/28/28/Static 충돌 11)
+- 노출 정책표 단언(SAFE 3·SHADOW 18·BLOCKED 7, `TestExposurePolicyCoversUpstreamContract`)
+- 호환성 판정(`TestStaticDynamicCompatibility`)
+
+2026-09-17에 로컬에서 실행 중이던 kadmin 개발 빌드(`version: dev`)의 실제 `/openapi.json`(322,426바이트)도 대조했다.
+
+- 같은 점: Operation 31개의 ID·메서드·경로·`x-mcp-enabled`가 픽스처와 같다.
+- 다른 점: 설명·`x-mcp-note`·일부 응답 선언이 이전 버전이었다. 예를 들어 `getEventIssue`에 204 선언이 없고, `listClusters` note에 SASL 경고가 없다.
+- 결과: 이 계약으로도 등록 가능 28·제외 0이었다. 실제 배포본과 픽스처가 설명 수준에서 어긋날 수 있으므로, 노출 판단은 note 문구가 아니라 응답 필드와 핸들러 동작에 근거한다.
+
+### 계약에서 확인한 사실
+
+| 항목 | 값 |
+| --- | --- |
+| Operation | 31개(모두 `x-mcp-enabled` 키 보유). `true` 28개, `false`는 `login`(POST)·`getClusterStorage`·`getAssetGraphReport`(text/markdown) |
+| 파라미터 | 전체 path 27·query 52, 이 중 MCP 노출 Operation은 path 25·query 48. 모두 string/integer/boolean/enum/스칼라 배열. `$ref`는 enum 스키마(EventStatus·EventSeverity·EventCategory·EventAttentionLevel·EventCode·EventResourceType) |
+| 배열 query | `explode: true`(반복 표기). upstream은 콤마 목록도 받는다 |
+| 204 선언 | `getEventIssue`만 |
+| nullable 최상위 응답 | `listDefaultClusterTopics`(`type: ["array","null"]`). 기존 DTO 전송은 최상위 `null`을 거부하므로 Dynamic은 `GetRaw`로 보존한다 |
+| 긴 설명 | summary+description 최대 약 3 KiB(`getClusterPartitionHealth`) |
+
+### 이번 작업에서 기록한 차이와 결함
+
+- **공개 범위**: `listClusters`·`getCluster`의 `x-mcp-note`는 SASL 사용자명과 TLS 파일 경로가 평문으로 실린다는 것을 알면서, 노출 측 마스킹을 전제로 노출을 허용한다.
+  - 이 저장소의 Static DTO는 이 값을 버린다.
+  - Dynamic은 마스킹하지 않으므로 2차 노출 안전 게이트에서 두 Operation을 **BLOCKED**로 두었다.
+  - 토픽 `configs`, 이벤트 `evidence`, 실패 `reasons`의 Kafka 오류 원문을 싣는 Operation은 SHADOW로 두어 기본 서버에 노출하지 않는다.
+  - 분류 전체는 [dynamic-mcp.md](dynamic-mcp.md#노출-안전-게이트)에 있다.
+- **upstream 설명과 실제 동작의 차이(2차 조사)**: 아래는 note 문구와 실제 동작이 어긋나는 곳이다. 노출 분류는 실제 동작을 따랐다.
+  - `getClusterHealth` note는 "자격증명을 노출하지 않는다"고 한다. 실제로는 `error`에 어댑터 생성 오류 원문(TLS 파일 경로 포함 가능)이 실린다.
+  - `getAssetGraph` note는 "SCRAM 요약에는 mechanism·iterations·locked만 있다"고 한다. 실제로는 `attrs.username`도 실린다.
+  - `listRequests`·`getRequest` note는 "시크릿이 없다"고 한다. 실제로는 반영 실패 이력 `comment`에 정제되지 않은 어댑터 오류 원문이 저장된다.
+  - `listClusterEvents`의 `clusterId` 쿼리는 서버가 경로 `{id}`로 덮어써 무시한다. 그런데도 계약에 입력으로 선언되어 있다.
+- **Static 도구의 큰 정수 반올림(기존 결함)**: SDK v1.8.0 제네릭 `AddTool`은 출력 스키마 default를 적용하기 위해 구조화 결과를 `any`로 해석(float64)한 뒤 다시 직렬화한다. 그래서 2^53을 넘는 int64 Lag·Offset·retention이 반올림된다. 합성 비교에서 `totalLag` 9007199254740993이 9007199254740992로 나왔다. 실제 운영 값이 이 범위에 이를 가능성은 낮지만, Static 쪽을 고칠 때는 `TestDynamicShadowComparison`의 단언도 함께 갱신한다. Dynamic은 결과를 직접 만들어 원문을 유지한다.
+- **입력 계약 차이**: 같은 이름이라도 Static은 `cluster_id`·`group_name`, Dynamic은 `id`·`name`이다. 이름이 같다고 자동 교체할 수 없는 근거다.
+- **Backend 결함 비보정**: 요청서가 열거한 여섯 결함(`failedBrokers` nil, storage 실패 사유 손실, Lag 전면 실패의 `200 + []`, 이벤트 저장소 오류의 404 접힘, `getCluster` RBAC 비대칭, Request 정렬 차이)은 Dynamic에서 보정하지 않는다. 원문과 HTTP 상태를 그대로 전달하고 판정 필드를 만들지 않는다. `getClusterStorage`는 `x-mcp-enabled=false`라 도구가 만들어지지 않는다.
+- **경로 디코딩**: Dynamic은 `/`·`;`·`,`가 든 그룹명·토픽명도 인코딩해서 보낸다. upstream 라우터가 인코딩된 조각을 어떻게 복원하는지는 계약에 명시되어 있지 않다(Static 멤버 도구는 같은 이유로 호출 전에 거부한다). 앞 절의 Backend 개선 후보와 같다.
+- **servers 해석**: 계약이 `servers[0].url="/"`를 보장하므로 설정한 `ABLEOPS_BASE_URL`만 쓴다. 다른 값이 오면 계약 전체를 거부한다.

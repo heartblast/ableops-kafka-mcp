@@ -141,16 +141,27 @@ Write-Host '실행파일 체크섬 확인 완료'
 | `logging.level` | `MCP_LOG_LEVEL` | `info`, 기존 debug/info/warn/error |
 | `message_sample.enabled` | `ABLEOPS_MESSAGE_SAMPLE_ENABLED` | boolean `false`, 샘플 위치 메타데이터 조회 활성화 |
 | `message_sample.allowed_topics` | `ABLEOPS_MESSAGE_SAMPLE_TOPICS` | 빈 목록. 정확한 cluster_id/topic_name 조합 최대 100개, 환경변수에서는 쉼표로 구분 |
+| `dynamic_tools.enabled` | `ABLEOPS_DYNAMIC_TOOLS` | boolean `false`. `true`일 때만 `/openapi.json`을 읽어 Dynamic 도구를 추가하고 주기적으로 갱신 |
+| `dynamic_tools.operations` | `ABLEOPS_DYNAMIC_OPERATIONS`(쉼표 구분) | 생략 시 1차 파일럿 5개, `[]`는 선택 없음. lowerCamelCase operationId 최대 64개. 노출 안전 게이트가 SAFE로 분류한 것만 추가 |
+| `dynamic_tools.refresh_interval` | `ABLEOPS_DYNAMIC_REFRESH_INTERVAL` | 문자열 `5m`, 허용 `1m`~`24h`. 실행 중 계약 변경 확인 주기 |
 
 설정은 **명시 CLI > 비어 있지 않은 기존 환경변수 > YAML > 기존 기본값** 순서다. 비어 있는 환경변수는 YAML 값을 지우지 않는다. 명시한 `--allowed-origins=`는 빈 목록으로 덮어쓴다. `auth.token_env`는 토큰 값의 우선순위가 아닌 읽을 환경변수 이름의 선택이다. 별도 이름을 지정하면 `ABLEOPS_API_TOKEN`으로 대체하지 않는다. HTTP 서버는 선택한 토큰 변수와 공용 Backend 토큰을 읽지 않는다.
 
-`auth.token_env`는 환경변수 이름만 받으며 기존 설정 이름인 `ABLEOPS_BASE_URL`, `ABLEOPS_ALLOW_HTTP`, `ABLEOPS_REQUEST_TIMEOUT`, `ABLEOPS_CA_FILE`, `MCP_AUTH_STORE`, `MCP_LOG_LEVEL`, `ABLEOPS_MESSAGE_SAMPLE_ENABLED`, `ABLEOPS_MESSAGE_SAMPLE_TOPICS`와 대소문자 구분 없이 충돌하면 거부한다. stdio는 HTTP 인증 저장소를 읽거나 그 경로의 환경변수를 확장하지 않는다.
+`auth.token_env`는 환경변수 이름만 받으며 기존 설정 이름인 `ABLEOPS_BASE_URL`, `ABLEOPS_ALLOW_HTTP`, `ABLEOPS_REQUEST_TIMEOUT`, `ABLEOPS_CA_FILE`, `MCP_AUTH_STORE`, `MCP_LOG_LEVEL`, `ABLEOPS_MESSAGE_SAMPLE_ENABLED`, `ABLEOPS_MESSAGE_SAMPLE_TOPICS`, `ABLEOPS_DYNAMIC_TOOLS`, `ABLEOPS_DYNAMIC_OPERATIONS`, `ABLEOPS_DYNAMIC_REFRESH_INTERVAL`과 대소문자 구분 없이 충돌하면 거부한다. stdio는 HTTP 인증 저장소를 읽거나 그 경로의 환경변수를 확장하지 않는다.
 
 YAML의 `ca_file`/`store_file`은 `${ENV_NAME}` 확장을 지원하고 상대 경로를 YAML 디렉터리 기준으로 해석한다. 토큰 변수는 경로 확장에 사용할 수 없다. 미설정/빈 참조 변수는 오류이며 명령 실행, shell 구문, `%VAR%`, `~` 확장은 제공하지 않는다. 환경변수로 직접 지정한 경로는 기존 실행 디렉터리 기준 동작을 유지한다. 프로세스 환경변수를 바꿔 YAML을 적용하지 않는다.
 
 파일은 최대 64 KiB, 하나의 YAML 문서, `version: 1`과 선언된 키만 허용한다. UTF-8 BOM은 허용한다. 알 수 없는 키·중복 키·다중 문서·잘못된 타입·null·anchor/alias/merge를 거부하며 토큰·비밀번호·Authorization 원문 필드는 제공하지 않는다. 파서 오류·파일 경로·설정값 원문을 로그에 인용하지 않는다. 파일을 지정했는데 없거나 잘못됐으면 환경변수로 조용히 대체하지 않고 시작을 중단한다.
 
-설정은 시작할 때 한 번 읽으며 자동 재시작·hot reload는 없다. HTTP 인증 저장소의 매 요청 재조회와 폐기 적용은 기존 동작을 유지한다. YAML 파일이 읽혔다고 인증 등록·Backend 연결·권한이 검증된 것은 아니다. `/healthz`도 MCP 프로세스 준비 상태만 나타낸다.
+설정은 시작할 때 한 번 읽으며 설정 파일의 자동 재시작·hot reload는 없다.
+
+Dynamic 도구를 켜면 동작은 다음과 같다.
+
+- OpenAPI 계약을 시작할 때 읽고, 이후 `refresh_interval`마다 ETag로 변경을 확인한다.
+- 계약 조회는 `request_timeout`만큼 기동을 늦출 수 있다.
+- 조회에 실패하면 경고를 남기고 Static 도구로 기동한 뒤 다음 주기에 다시 시도한다.
+- 실행 중 갱신이 실패하면 마지막 정상 도구 목록을 유지한다.
+- Dynamic이 꺼져 있으면 계약 조회와 주기 갱신이 모두 없다. HTTP 인증 저장소의 매 요청 재조회와 폐기 적용은 기존 동작을 유지한다. YAML 파일이 읽혔다고 인증 등록·Backend 연결·권한이 검증된 것은 아니다. `/healthz`도 MCP 프로세스 준비 상태만 나타낸다.
 
 ### YAML과 인증 등록 CLI
 
@@ -186,6 +197,9 @@ try {
 | `ABLEOPS_CA_FILE` | 선택. 사설 CA 인증서의 PEM 파일 경로 |
 | `MCP_LOG_LEVEL` | `debug`, `info`(기본), `warn`, `error` |
 | `ABLEOPS_ALLOW_HTTP` | 기본 `false`. `true`일 때 `localhost`, `127.0.0.1`, `::1`의 개발용 HTTP만 허용 |
+| `ABLEOPS_DYNAMIC_TOOLS` | 기본 `false`. `true`/`false`만 허용. [Dynamic 도구](dynamic-mcp.md) |
+| `ABLEOPS_DYNAMIC_OPERATIONS` | 선택. 선택할 operationId 쉼표 목록(SAFE만 노출) |
+| `ABLEOPS_DYNAMIC_REFRESH_INTERVAL` | 선택. 계약 변경 확인 주기. 기본 `5m`, 허용 `1m`~`24h` |
 
 사설 CA는 `ABLEOPS_CA_FILE`로 지정하면 이 프로세스의 REST 클라이언트가 사용하는 시스템 CA 목록에 추가됩니다. OS 신뢰 저장소를 수정하지 않으며 TLS 검증은 계속 수행합니다.
 

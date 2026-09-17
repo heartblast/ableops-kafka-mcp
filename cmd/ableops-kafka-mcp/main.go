@@ -13,9 +13,12 @@ import (
 
 	"github.com/heartblast/ableops-kafka-mcp/internal/ableops"
 	"github.com/heartblast/ableops-kafka-mcp/internal/config"
+	"github.com/heartblast/ableops-kafka-mcp/internal/dynamic"
 	"github.com/heartblast/ableops-kafka-mcp/internal/localauth"
 	"github.com/heartblast/ableops-kafka-mcp/internal/mcpserver"
+	"github.com/heartblast/ableops-kafka-mcp/internal/openapi"
 	"github.com/heartblast/ableops-kafka-mcp/internal/requestctx"
+	"github.com/heartblast/ableops-kafka-mcp/internal/tools"
 )
 
 func main() {
@@ -84,7 +87,28 @@ func run() int {
 	defer client.CloseIdleConnections()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	server := mcpserver.New(client, logger)
+	var options []mcpserver.Option
+	var runtime *dynamic.Runtime
+	if runtimeConfig.Dynamic.Enabled {
+		runtime = newDynamicRuntime(client, runtimeConfig.Dynamic, logger)
+		options = append(options, mcpserver.WithRuntime(runtime))
+	}
+	server := mcpserver.New(client, logger, options...)
+	if runtime != nil {
+		// 최초 적재는 전송을 시작하기 전에 끝내 첫 tools/list에 반영한다. 실패해도 Static 도구로 기동한다.
+		runtime.Refresh(ctx)
+		refreshCtx, stopRefresh := context.WithCancel(ctx)
+		refreshDone := make(chan struct{})
+		go func() {
+			defer close(refreshDone)
+			runtime.Run(refreshCtx, runtimeConfig.Dynamic.RefreshInterval)
+		}()
+		defer func() {
+			stopRefresh()
+			<-refreshDone
+		}()
+		logger.Info("동적 도구 계약 주기 갱신 시작", "interval", runtimeConfig.Dynamic.RefreshInterval.String())
+	}
 	if runtimeConfig.Transport == "http" {
 		store, storeErr := localauth.NewStore(runtimeConfig.AuthStore, func(ctx context.Context, token string) (string, error) {
 			p, _ := requestctx.FromContext(ctx)
@@ -108,4 +132,13 @@ func run() int {
 	}
 	logger.Info("MCP 서버 종료")
 	return 0
+}
+
+// newDynamicRuntime은 계약 조회기와 Registry 구성을 묶은 런타임을 만든다. 계약은 아직 조회하지 않는다.
+// 설정이 꺼져 있으면 호출하지 않으므로 /openapi.json 조회도, 주기 갱신도 없다.
+func newDynamicRuntime(client *ableops.Client, cfg config.DynamicConfig, logger *slog.Logger) *dynamic.Runtime {
+	return dynamic.NewRuntime(client, logger, openapi.NewLoader(client), dynamic.Options{
+		StaticToolNames: tools.StaticNames(),
+		Operations:      cfg.Operations,
+	})
 }
