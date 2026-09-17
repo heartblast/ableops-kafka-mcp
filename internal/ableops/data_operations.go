@@ -102,7 +102,7 @@ func (c *Client) SampleTopicMessages(ctx context.Context, cluster, topic string,
 	defer cancel()
 	var out []SampleMessage
 	// 이 고정 경로는 읽을 offset이 없을 때 null을 반환한다. 일반 Get의 null 거부는 유지한다.
-	err := c.request(ctx, http.MethodGet, []string{"clusters", cluster, "topics", topic, "messages"}, url.Values{"limit": {strconv.Itoa(limit)}}, nil, &out, false, MaxSampleResponseBytes, true)
+	_, err := c.request(ctx, http.MethodGet, []string{"clusters", cluster, "topics", topic, "messages"}, url.Values{"limit": {strconv.Itoa(limit)}}, nil, &out, getMode{allowNull: true}, MaxSampleResponseBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -174,7 +174,8 @@ func (c *Client) preview(ctx context.Context, cluster, kind string, in, out any)
 	if err != nil || len(body) > 32*1024 {
 		return publicError("invalid_request", 0)
 	}
-	return c.request(ctx, http.MethodPost, segments, nil, body, out, false, MaxResponseBytes, false)
+	_, err = c.request(ctx, http.MethodPost, segments, nil, body, out, getMode{}, MaxResponseBytes)
+	return err
 }
 
 func (c *Client) PreviewACLPlan(ctx context.Context, cluster string, in ACLPlanInput) (ACLPlan, error) {

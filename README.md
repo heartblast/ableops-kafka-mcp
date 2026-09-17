@@ -2,6 +2,8 @@
 
 기존 AbleOps Kafka REST API의 **조회·미리보기 도구 33개를 stdio와 Streamable HTTP로 제공**합니다. stdio는 개인 사용자용이며 기본 전송입니다. HTTP는 사용자별 별도 MCP 토큰을 Backend 세션에 매핑하는 **loopback 전용 개발 검증 모드**입니다. Kafka·DB 직접 연결, 로그인 대행, 신청·반영·배포 실행, LLM·채팅, 공용 OAuth 서비스는 구현하지 않습니다.
 
+선택 기능으로 Backend의 OpenAPI 계약(`/openapi.json`)에서 조회 도구를 만들어 Static 도구 옆에 추가할 수 있습니다(**기본 비활성**, [Dynamic 도구](#openapi-기반-dynamic-도구-선택)).
+
 ## 요구 환경
 
 - 소스 빌드에는 Go **1.25.0 이상**이 필요합니다. 공식 [MCP Go SDK v1.8.0](https://github.com/modelcontextprotocol/go-sdk/releases/tag/v1.8.0)을 고정했습니다. [해당 버전 go.mod](https://github.com/modelcontextprotocol/go-sdk/blob/v1.8.0/go.mod)의 최소 Go 버전을 따릅니다. 배포본 실행에는 Go 설치가 필요하지 않습니다.
@@ -117,6 +119,9 @@ logging:
 | `ABLEOPS_MESSAGE_SAMPLE_ENABLED` | 기본 `false`. 활성화에는 허용 토픽 필요. 메시지 위치 메타데이터만 반환 |
 | `ABLEOPS_MESSAGE_SAMPLE_TOPICS` | 정확한 `cluster_id/topic_name` 조합의 쉼표 구분 목록. YAML `message_sample.allowed_topics`로도 지정 가능, 와일드카드 금지 |
 | `ABLEOPS_ALLOW_HTTP` | 기본 `false`. `true`이면 `localhost`, `127.0.0.1`, `::1`의 개발용 HTTP만 허용 |
+| `ABLEOPS_DYNAMIC_TOOLS` | 기본 `false`. `true`이면 기동 시 `/openapi.json`을 읽어 Dynamic 도구를 추가하고 주기적으로 갱신. YAML `dynamic_tools.enabled` |
+| `ABLEOPS_DYNAMIC_OPERATIONS` | 선택. 선택할 operationId 쉼표 목록. 생략 시 1차 파일럿 5개. 노출 안전 게이트가 SAFE로 분류한 것만 추가됨. YAML `dynamic_tools.operations` |
+| `ABLEOPS_DYNAMIC_REFRESH_INTERVAL` | 기본 `5m`, 허용 `1m`~`24h`. 실행 중 계약 변경 확인 주기. YAML `dynamic_tools.refresh_interval` |
 
 예를 들어 PowerShell에서 아래처럼 토큰을 화면·명령 이력에 출력하지 않고 입력할 수 있습니다. 입력한 토큰은 서버 실행을 위해 해당 PowerShell 프로세스 환경에 저장됩니다.
 
@@ -200,7 +205,7 @@ v0.2.0에서 추가한 22개 도구의 필수 인자·권한·질문 예시·제
 - 토큰, 인증 설정, SCRAM 비밀번호, Kafka 메시지 본문을 노출하는 도구는 없습니다. 외부 문자열은 데이터로 취급합니다. 리다이렉트는 모두 차단하고 TLS 검증은 항상 켭니다. 자동 재시도는 하지 않습니다.
 - 경로의 특수문자는 안전하게 인코딩합니다. 현재 Backend는 `/`가 포함된 그룹명의 percent-encoded 경로를 디코딩하지 않을 수 있습니다. Lag 도구는 반환된 그룹이 요청 대상과 다르면 `invalid_response`로 거부합니다. 멤버 API에는 반환 그룹 식별자가 없어 대조할 수 없으므로 경로 인자에 `/`, `;`, `,`가 포함되면 호출 전에 `unsupported`로 거부합니다. 지원하려면 Backend의 경로 디코딩 계약 개선이 필요합니다.
 
-설계는 [architecture.md](docs/architecture.md), 로컬 소스 근거와 API 계약은 [api-mapping.md](docs/api-mapping.md), 후속 범위는 [roadmap.md](docs/roadmap.md), 실행한 검증과 미검증 범위는 [verification.md](docs/verification.md)에 정리했습니다. mock 테스트 성공은 실제 Backend 연동 검증을 뜻하지 않습니다.
+설계는 [architecture.md](docs/architecture.md), Dynamic 도구는 [dynamic-mcp.md](docs/dynamic-mcp.md), 로컬 소스 근거와 API 계약은 [api-mapping.md](docs/api-mapping.md), 후속 범위는 [roadmap.md](docs/roadmap.md), 실행한 검증과 미검증 범위는 [verification.md](docs/verification.md)에 정리했습니다. mock 테스트 성공은 실제 Backend 연동 검증을 뜻하지 않습니다.
 
 ### 운영 분석 호출 예시
 
@@ -217,6 +222,24 @@ v0.2.0에서 추가한 22개 도구의 필수 인자·권한·질문 예시·제
 `asset_type`은 백엔드가 지원하는 `TOPIC`, `PRINCIPAL`, `CONSUMER_GROUP`이며 `asset_key`는 실제 이름/Principal 식별자입니다. 예를 들어 Principal은 `User:synthetic-app`입니다. 깊이는 기본 1, 최대 2이고 `limit`은 기본 50, 최대 100입니다. 방향과 연결 관계가 장애 전파를 확정하지는 않습니다. 잘림과 수집 실패가 있으면 전체 영향 분석으로 해석하지 마세요.
 
 토픽 설정의 직접 지정/상속 출처는 현재 API가 제공하지 않습니다. 빈 멤버 목록으로 그룹 존재나 장애를 단정할 수 없습니다. 이벤트 `actions`는 서버 건수 제한이 없어 호출하지 않으며 `partial`/`unsupported`를 반환합니다. 플레이북은 권장 안내이고 수행 이력이 아닙니다. 신청의 `APPROVED`, `APPLIED`, `VERIFIED`는 각각 승인·반영·검증 상태로 보존하고, 자유 형식 실패 원문과 재시도 가능 여부는 제공하지 않습니다. 상세 계약과 미지원 사유는 [API 매핑](docs/api-mapping.md#운영-분석-조회-도구)을 참고하세요.
+
+## OpenAPI 기반 Dynamic 도구 (선택)
+
+`ABLEOPS_DYNAMIC_TOOLS=true`(또는 YAML `dynamic_tools.enabled: true`)이면 기동할 때 `GET {ABLEOPS_BASE_URL}/openapi.json`을 **인증 없이** 읽고, 이후 `ABLEOPS_DYNAMIC_REFRESH_INTERVAL`(기본 5분)마다 ETag로 변경을 확인합니다. 도구 이름은 operationId의 snake_case(`getTopic` → `get_topic`)이고, 인자 이름은 OpenAPI 이름(`id`, `name`, `clusterId`)을 그대로 씁니다.
+
+- **노출 안전 게이트**: `x-mcp-enabled: true`인 GET 중 선택했고 SAFE로 분류된 것만 기본 서버에 추가합니다.
+  - 현재 SAFE는 `getBranding`, `getEventSummary`, `getTopicPartitions` 3개입니다. 이 중 `getEventSummary`는 같은 이름의 Static 도구가 있어 실제로 추가되는 것은 2개입니다.
+  - 응답 원문에 인증 설정·오류 원문·개인정보가 실리거나 Static과 공개 범위가 다른 Operation은 SHADOW(비노출) 또는 BLOCKED(등록 금지)입니다.
+  - 기본 선택(`listClusters, listTopics, getTopic, listConsumerGroups, listEvents`)은 모두 SHADOW·BLOCKED라 **추가되는 도구가 없습니다**.
+- Static 도구는 교체하지 않습니다. 같은 이름의 Dynamic 도구는 노출하지 않습니다.
+- 결과의 `body`는 **Backend JSON 원문**입니다. `http_status` 200은 조회 성공이나 정상 판정이 아니므로 본문의 `status`·`partial`·`error`·`null`을 함께 확인하세요.
+- **계약 변경 반영**: 새 계약이 검증을 통과하면 도구 목록을 원자적으로 교체하고, 도구 정의가 실제로 바뀐 경우에만 `notifications/tools/list_changed`를 보냅니다.
+  - 304·조회 실패·잘못된 계약에서는 마지막 정상 도구 목록을 유지하고 알리지 않습니다.
+  - 기동 시 조회에 실패해도 Static 도구로 기동하고 다음 주기에 다시 시도합니다.
+  - HTTP(stateless) 모드의 알림은 최선 노력이므로 클라이언트가 `tools/list`를 다시 조회하면 반영됩니다.
+- POST·PUT·PATCH·DELETE와 `x-mcp-enabled`가 true가 아닌 Operation은 만들지도 실행하지도 않습니다.
+
+설계·노출 분류표·제외 규칙·Static과의 호환성 판정은 [dynamic-mcp.md](docs/dynamic-mcp.md)에 정리했습니다.
 
 ## 로컬 Streamable HTTP 실행
 

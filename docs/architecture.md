@@ -10,18 +10,47 @@
 
 - `cmd/ableops-kafka-mcp`: 환경 검증, stderr 구조화 로그, 시그널 취소와 stdio 수명 관리.
 - `internal/config`: 명시적으로 지정한 YAML·기존 환경변수·CLI 덮어쓰기를 조합하고 origin URL, 명시적 loopback HTTP, timeout, 토큰 형식, 로그 수준 검증.
-- `internal/ableops`: 공통 HTTP 클라이언트, 안전한 경로 인코딩, 인증 전달, 타입을 명시한 공개 DTO, HTTP 오류 분류. 응답 필드를 통째로 중계하지 않는다.
+- `internal/ableops`: 공통 HTTP 클라이언트, 안전한 경로 인코딩, 인증 전달, 타입을 명시한 공개 DTO, HTTP 오류 분류. Static 도구용 응답은 DTO로만 해석하며 통째로 중계하지 않는다. 무인증 계약 조회(`FetchOpenAPI`)와 Dynamic 도구용 원문 GET(`GetRaw`)도 같은 전송 경계에 있다.
+- `internal/openapi`: `/openapi.json`의 내부 모델·검증(Operation 단위 제외)과 ETag·Last Known Good 로더. 새 계약은 호출자 검증 뒤에만 커밋한다.
+- `internal/dynamic`: operationId→도구 이름, 입력 스키마 컴파일, 노출 안전 게이트(SAFE/SHADOW/BLOCKED)와 배치(불변 Registry), 원문 전달 Executor, 실행 중 갱신·원자적 교체(Runtime), Static 전환 판정(compat).
 - `internal/tools`: 도구별 입력/출력 Schema, DTO 변환, 부분 실패·잘림·출처·조회시각 표현, 도구 실행 로그.
 - `internal/mcpserver`: 도구를 등록한 전송 독립 서버 생성. stdio 연결은 실행 진입점이 담당한다.
 - `internal/mcpserver/stdio.go`: stdio 전송 실행과 프로세스 종료 context를 개별 요청에 연결한다. SDK 기본 stdio 수명만으로 진행 중 요청이 취소된다고 가정하지 않는다.
 
 공식 MCP Go SDK v1.8.0을 고정하고 SDK 요구 버전인 Go 1.25.0을 사용한다. 기존 프로젝트의 모듈, Kafka 클라이언트, DB 드라이버, 정책 엔진을 가져오지 않는다. 로컬 `replace`, `go.work`, 별도 저장소, 공유 캐시, 수집 워커가 없다.
 
+## OpenAPI 기반 Dynamic 도구
+
+기본 비활성인 선택 기능이다. 켜면 흐름은 다음과 같다.
+
+1. `cmd`가 `dynamic.Runtime`을 만들고, `mcpserver.New(WithRuntime)`가 Static 도구를 먼저 등록한 뒤 Runtime을 서버에 연결한다.
+2. 전송을 시작하기 전에 최초 적재를 끝낸다.
+3. 이후 goroutine이 주기적으로 갱신한다. 프로세스 종료 시 취소하고 끝날 때까지 기다린다.
+
+SDK `AddTool`은 같은 이름을 조용히 교체한다. 그래서 Static 도구 이름은 Registry 배치와 등록 경계 두 곳에서 예약한다. 같은 이름의 Dynamic 도구와 SHADOW 분류 도구는 `NewDynamicComparison` 비교 서버에서만 호출할 수 있다. BLOCKED는 어디에도 등록하지 않는다.
+
+```text
+/openapi.json ─(무인증, If-None-Match)→ openapi.Loader.LoadValidated ─Parse→ Contract
+    → dynamic.Build(Static 이름, 선택 목록, 노출 정책) → Registry{exposed, shadow, blocked, not_selected, skipped}
+    → 검증 성공 시에만 계약·ETag 커밋 → Runtime.apply: Diff → [tools/list 쓰기 잠금] AddTool·RemoveTools → list_changed
+tools/list → Runtime 미들웨어(읽기 잠금) → SDK 목록(교체 전 또는 후의 완전한 목록)
+tools/call → SDK 입력 검증 → Executor(시작 시점 도구, 원본 인자 바인딩) → Client.GetRaw → Result{body 원문}
+```
+
+Dynamic 결과는 DTO 원칙의 **의도된 예외**다. Backend 응답을 해석·보정하지 않고 `body`에 원문으로 싣는다.
+
+- **노출 결정**: upstream의 `x-mcp-enabled`, 운영자의 선택 목록, 이 저장소의 노출 정책표(SAFE만 기본 노출)가 함께 결정한다.
+- **Static과 같은 경계**: 토큰 검사, 크기 제한, 오류 본문 비노출, 리다이렉트 차단, 호출 예산.
+- **쓰기 메서드**: 컴파일과 실행 두 단계에서 거부한다.
+- **적재·갱신 실패**: 마지막 정상 도구 목록을 유지한다. 최초 적재 실패이면 Static만으로 서비스하고 다음 주기에 다시 시도한다.
+
+상세 규칙과 Static과의 차이는 [dynamic-mcp.md](dynamic-mcp.md)에 있다.
+
 ## 실행 설정
 
 `--config`를 명시한 경우에만 YAML 파일을 읽는다. 기존 명시 CLI 플래그, 비어 있지 않은 환경변수, YAML, 기본값 순으로 메모리에서 조합하며 프로세스 환경은 바꾸지 않는다. YAML의 경로는 파일 디렉터리 기준이고 환경변수에서 온 경로는 기존 실행 디렉터리 기준이다. HTTP 서버와 등록/폐기 CLI는 같은 공개 설정 계약을 사용하며 token_env는 stdio/등록의 비밀 환경변수 참조다. HTTP에서는 공용 Backend 토큰을 읽지 않는다.
 
-YAML 파서는 [공식 YAML Go 패키지](https://pkg.go.dev/go.yaml.in/yaml/v3)를 명시적 버전으로 고정하여 사용한다. 파일 64 KiB 상한과 엄격한 키·타입·단일 문서 검사를 적용하고 파서 원문을 외부 오류로 전달하지 않는다. 토큰 원문과 인증 매핑은 YAML에 포함하지 않으며 기존 소유자 전용 인증 저장소를 유지한다. 설정 변경은 프로세스 재시작 후 적용하고, 사용자별 인증 저장소의 매 요청 재조회와는 별개다.
+YAML 파서는 [공식 YAML Go 패키지](https://pkg.go.dev/go.yaml.in/yaml/v3)를 명시적 버전으로 고정하여 사용한다. 파일 64 KiB 상한과 엄격한 키·타입·단일 문서 검사를 적용하고 파서 원문을 외부 오류로 전달하지 않는다. 토큰 원문과 인증 매핑은 YAML에 포함하지 않으며 기존 소유자 전용 인증 저장소를 유지한다. 설정 변경은 프로세스 재시작 후 적용하고, 사용자별 인증 저장소의 매 요청 재조회와는 별개다. Dynamic 도구의 upstream 계약 변경은 설정이 아니므로 재시작 없이 갱신 주기에 따라 반영된다.
 
 ## 사용자와 클러스터 권한
 

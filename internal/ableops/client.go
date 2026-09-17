@@ -116,7 +116,8 @@ func (c *Client) RedactContext(ctx context.Context, value string) string {
 // 내부 전송 보조 함수이며 범용 MCP 도구로 노출하지 않는다.
 // 응답 크기, JSON 문법, 토큰 검사를 통과한 뒤에만 목적지에 값을 기록한다.
 func (c *Client) Get(ctx context.Context, segments []string, query url.Values, out any) error {
-	return c.get(ctx, segments, query, out, false)
+	_, err := c.get(ctx, segments, query, out, getMode{})
+	return err
 }
 
 var errNoContent = errors.New("선택 관계가 없습니다")
@@ -124,21 +125,52 @@ var errNoContent = errors.New("선택 관계가 없습니다")
 // GetOptional은 계약에 명시된 HTTP 204를 빈 관계로 구분한다.
 // 일반 Get은 204를 유효한 상세 응답으로 인정하지 않는다.
 func (c *Client) GetOptional(ctx context.Context, segments []string, query url.Values, out any) (bool, error) {
-	err := c.get(ctx, segments, query, out, true)
+	_, err := c.get(ctx, segments, query, out, getMode{optional: true})
 	if errors.Is(err, errNoContent) {
 		return false, nil
 	}
 	return err == nil, err
 }
 
-func (c *Client) get(ctx context.Context, segments []string, query url.Values, out any, optional bool) error {
-	return c.request(ctx, http.MethodGet, segments, query, nil, out, optional, MaxResponseBytes, false)
+// RawResponse는 백엔드 JSON을 DTO로 재구성하지 않고 전달하기 위한 응답이다.
+// Body는 크기·문법·토큰 검사를 통과한 원문이며 204이면 nil이다.
+type RawResponse struct {
+	Status int
+	Body   json.RawMessage
+}
+
+// GetRaw는 OpenAPI 기반 동적 도구의 전송 경로다. 인증·경로 인코딩·리다이렉트 차단·
+// 크기 제한·토큰 검사는 Get과 같고, 최상위 JSON null을 계약상 유효한 값으로 보존한다.
+// allowNoContent는 계약이 204를 선언한 경우에만 true로 둔다.
+func (c *Client) GetRaw(ctx context.Context, segments []string, query url.Values, allowNoContent bool) (RawResponse, error) {
+	var body json.RawMessage
+	status, err := c.get(ctx, segments, query, &body, getMode{optional: allowNoContent, raw: true})
+	if errors.Is(err, errNoContent) {
+		return RawResponse{Status: status}, nil
+	}
+	if err != nil {
+		return RawResponse{}, err
+	}
+	return RawResponse{Status: status, Body: body}, nil
+}
+
+type getMode struct {
+	// optional은 HTTP 204를 errNoContent로 구분한다.
+	optional bool
+	// raw는 out(*json.RawMessage)에 검사한 원문을 그대로 기록하고 최상위 null을 허용한다.
+	raw bool
+	// allowNull은 DTO 경로에서 계약상 허용된 최상위 null을 받아들인다.
+	allowNull bool
+}
+
+func (c *Client) get(ctx context.Context, segments []string, query url.Values, out any, mode getMode) (int, error) {
+	return c.request(ctx, http.MethodGet, segments, query, nil, out, mode, MaxResponseBytes)
 }
 
 // request는 고정 API 메서드만 사용하는 내부 전송부다. 도구 인자로 URL·헤더를 받지 않는다.
-func (c *Client) request(ctx context.Context, method string, segments []string, query url.Values, bodyBytes []byte, out any, optional bool, maxBytes int64, allowNull bool) error {
+func (c *Client) request(ctx context.Context, method string, segments []string, query url.Values, bodyBytes []byte, out any, mode getMode, maxBytes int64) (int, error) {
 	if err := reserveOperationRequest(ctx); err != nil {
-		return err
+		return 0, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
@@ -148,20 +180,20 @@ func (c *Client) request(ctx context.Context, method string, segments []string, 
 		token = p.BackendToken
 	}
 	if (c.requestCredentials && !authenticated) || token == "" {
-		return publicError("authentication_required", 0)
+		return 0, publicError("authentication_required", 0)
 	}
 	for _, ch := range token {
 		if ch < 0x21 || ch > 0x7e {
-			return publicError("authentication_required", 0)
+			return 0, publicError("authentication_required", 0)
 		}
 	}
 	if len(segments) == 0 || out == nil {
-		return publicError("invalid_request", 0)
+		return 0, publicError("invalid_request", 0)
 	}
 	escaped := make([]string, len(segments))
 	for i, segment := range segments {
 		if segment == "" || segment == "." || segment == ".." || strings.ContainsAny(segment, "\x00\r\n") {
-			return publicError("invalid_request", 0)
+			return 0, publicError("invalid_request", 0)
 		}
 		escaped[i] = url.PathEscape(segment)
 	}
@@ -174,14 +206,14 @@ func (c *Client) request(ctx context.Context, method string, segments []string, 
 	case c.semaphore <- struct{}{}:
 		defer func() { <-c.semaphore }()
 	case <-ctx.Done():
-		return requestError(ctx, ctx.Err())
+		return 0, requestError(ctx, ctx.Err())
 	}
 	if err := ctx.Err(); err != nil {
-		return requestError(ctx, err)
+		return 0, requestError(ctx, err)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, requestURL.String(), bytes.NewReader(bodyBytes))
 	if err != nil {
-		return publicError("invalid_request", 0)
+		return 0, publicError("invalid_request", 0)
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	if p.RequestID != "" {
@@ -193,21 +225,21 @@ func (c *Client) request(ctx context.Context, method string, segments []string, 
 	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return requestError(ctx, err)
+		return 0, requestError(ctx, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return statusError(resp.StatusCode)
+		return resp.StatusCode, statusError(resp.StatusCode)
 	}
-	if optional && resp.StatusCode == http.StatusNoContent {
-		return errNoContent
+	if mode.optional && resp.StatusCode == http.StatusNoContent {
+		return resp.StatusCode, errNoContent
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
 	if err != nil {
-		return requestError(ctx, err)
+		return resp.StatusCode, requestError(ctx, err)
 	}
 	if int64(len(body)) > maxBytes {
-		return publicError("response_too_large", resp.StatusCode)
+		return resp.StatusCode, publicError("response_too_large", resp.StatusCode)
 	}
 	// 큰 정수의 정밀도를 보존하며 해석한 키와 값을 검사한다.
 	// JSON 이스케이프를 이용한 토큰 노출도 차단한다.
@@ -215,20 +247,29 @@ func (c *Client) request(ctx context.Context, method string, segments []string, 
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.UseNumber()
 	if err := decoder.Decode(&inspected); err != nil {
-		return publicError("invalid_response", resp.StatusCode)
+		return resp.StatusCode, publicError("invalid_response", resp.StatusCode)
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); err != io.EOF {
-		return publicError("invalid_response", resp.StatusCode)
+		return resp.StatusCode, publicError("invalid_response", resp.StatusCode)
 	}
-	if (inspected == nil && !allowNull) || bytes.Contains(body, []byte(token)) || containsToken(inspected, token) ||
+	// DTO 해석은 계약이 허용한 경우에만 최상위 null을 받는다. 원문 전달은 nullable 응답을 그대로 보존한다.
+	if (inspected == nil && !mode.raw && !mode.allowNull) || bytes.Contains(body, []byte(token)) || containsToken(inspected, token) ||
 		(p.MCPToken != "" && (bytes.Contains(body, []byte(p.MCPToken)) || containsToken(inspected, p.MCPToken))) {
-		return publicError("invalid_response", resp.StatusCode)
+		return resp.StatusCode, publicError("invalid_response", resp.StatusCode)
+	}
+	if raw, ok := out.(*json.RawMessage); ok && mode.raw {
+		var compact bytes.Buffer
+		if err := json.Compact(&compact, body); err != nil {
+			return resp.StatusCode, publicError("invalid_response", resp.StatusCode)
+		}
+		*raw = compact.Bytes()
+		return resp.StatusCode, nil
 	}
 	if err := json.Unmarshal(body, out); err != nil {
-		return publicError("invalid_response", resp.StatusCode)
+		return resp.StatusCode, publicError("invalid_response", resp.StatusCode)
 	}
-	return nil
+	return resp.StatusCode, nil
 }
 
 func containsToken(value any, token string) bool {

@@ -17,10 +17,12 @@ import (
 type service struct {
 	client *ableops.Client
 	logger *slog.Logger
+	names  []string
 }
 
-// Register는 전송과 무관하게 조회 도구와 입력·출력 스키마를 등록한다.
-func Register(server *mcp.Server, client *ableops.Client, logger *slog.Logger) {
+// Register는 전송과 무관하게 조회 도구와 입력·출력 스키마를 등록하고 등록한 도구 이름을 돌려준다.
+// Dynamic 도구가 같은 이름으로 Static 도구를 덮어쓰지 않도록 이 목록을 예약 이름으로 쓴다.
+func Register(server *mcp.Server, client *ableops.Client, logger *slog.Logger) []string {
 	if logger == nil {
 		logger = slog.New(slog.NewJSONHandler(io.Discard, nil))
 	}
@@ -38,6 +40,14 @@ func Register(server *mcp.Server, client *ableops.Client, logger *slog.Logger) {
 	registerMonitoringTools(server, s)
 	registerEventOperationsTools(server, s)
 	registerDataOperationsTools(server, s)
+	return append([]string(nil), s.names...)
+}
+
+// StaticNames는 Register가 등록하는 도구 이름이다. 별도 서버에 등록해 목록을 얻으므로
+// 도구 추가 시 따로 갱신할 목록이 없다. 도구 실행에는 쓰지 않는다.
+func StaticNames() []string {
+	server := mcp.NewServer(&mcp.Implementation{Name: "static-inventory", Version: "0"}, nil)
+	return Register(server, nil, nil)
 }
 
 func register[I, O any](server *mcp.Server, s *service, name, description string, schema map[string]any, cluster func(I) string, run func(context.Context, I) Envelope[O]) {
@@ -45,7 +55,9 @@ func register[I, O any](server *mcp.Server, s *service, name, description string
 }
 
 // registerWithAnnotations는 백엔드 감사 기록·스냅샷 갱신 등 확인된 부작용을 도구 설명에 반영한다.
+// 등록한 이름은 모두 s.names 에 모아 Dynamic 도구가 Static 이름을 덮어쓰지 못하게 예약한다.
 func registerWithAnnotations[I, O any](server *mcp.Server, s *service, name, description string, schema map[string]any, cluster func(I) string, annotations *mcp.ToolAnnotations, run func(context.Context, I) Envelope[O]) {
+	s.names = append(s.names, name)
 	// 도구가 추가하는 백엔드 감사·스냅샷 외에 자원 삭제·신청·반영 경로는 없다.
 	if annotations.DestructiveHint == nil {
 		annotations.DestructiveHint = new(bool)

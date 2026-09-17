@@ -19,7 +19,7 @@ try {
     }
     $env:ABLEOPS_VERIFY_BACKEND = '1'
     # -count=1은 실연동에서 이전 테스트 캐시를 재사용하지 않도록 한다.
-    go test ./internal/integration -run '^TestBackendLive$' -count=1 -v
+    go test ./internal/integration -run '^(TestBackendLive|TestDynamicBackendLive)$' -count=1 -v
     if ($LASTEXITCODE -ne 0) { throw '실제 Backend 검증 실패: 출력된 안전한 시나리오 결과를 확인하세요.' }
 } finally {
     foreach ($key in $previousEnvironment.Keys) {

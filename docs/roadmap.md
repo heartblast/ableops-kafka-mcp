@@ -18,6 +18,22 @@
 
 사용자 인증과 위임을 MCP 세션에 연결하고 도구 결과의 부분 실패·신선도·잘림을 사용자에게 표시한다. 이벤트 설명 같은 외부 문자열을 지시와 분리한다. 변경 신청은 조회 도구와 다른 허용 정책을 적용하며 신청 ID와 승인/반영 상태를 기존 Backend에서 추적한다. 이 저장소에는 채팅 UI나 LLM 호출을 추가하지 않았다.
 
+## OpenAPI 기반 Dynamic 도구 후속
+
+1차(기동 시 1회 적재·파일럿 도구)와 2차(ETag 주기 갱신·Last Known Good·Registry 원자적 교체·`tools/list_changed`·노출 안전 게이트·Static 호환성 판정)를 구현했다([dynamic-mcp.md](dynamic-mcp.md)). 남은 순서는 다음과 같다.
+
+1. **upstream 메타데이터 확장**: 원문 전달을 안전하게 넓히려면 upstream이 기계적으로 읽을 수 있는 정보를 줘야 한다. [제안](dynamic-mcp.md#upstream-openapi에-필요한-메타데이터-제안)은 노출 등급, 제외 필드, 오류 원문 필드, 판별 필드 위치, 클러스터 인자·권한 수준, 부수효과, Static 입력 별칭이다. 규격은 upstream(`ableops-kafka`)에서 먼저 확정한다.
+2. **노출 정책표 재분류**: 메타데이터가 생기면 수작업 정책표를 계약 기반 판정으로 바꾼다. 그 전까지는 upstream Operation이 추가될 때마다 응답 공개 범위를 확인해 표에 넣는다(`TestExposurePolicyCoversUpstreamContract`가 강제).
+3. **Static 도구의 단계적 전환**: 현재 8개 충돌 도구 모두 COMPATIBLE이 아니다. 전환 조건은 입력·출력 공개 범위·보안·업무 의미 호환과 실제 Backend E2E다. 도구별로 다음 중 하나를 결정한 뒤 옮긴다.
+   - 차이를 수용한다.
+   - 호환 계층(입력 별칭·검증된 필드 제외·판정 어댑터)을 둔다.
+   - 새 이름으로 병행한다.
+
+   Static 도구의 2^53 초과 정수 반올림(SDK 출력 처리)도 이때 함께 해결한다.
+4. **HTTP 알림 경로**: stateless HTTP에서는 legacy 클라이언트가 `tools/list_changed`를 받지 못한다. 신규 클라이언트도 `subscriptions/listen`이 요청 제한 시간(기본 30초)에 끊긴다. listen 전용 제한 시간·동시성 한도를 따로 둘지 결정한다.
+5. **갱신 운영성**: 갱신 결과(마지막 성공 시각·실패 코드·서비스 중 ETag 유무)를 진단 경로로 노출할지, 실패 백오프·지터를 둘지 검토한다. 현재는 stderr 로그뿐이다.
+6. **선택 도구 확대**: SAFE 밖 Operation은 실제 Backend에서 결과 크기(64 KiB)·권한·부수효과를 확인하고, 분류 근거가 해소된 뒤에 정책표를 바꾼다.
+
 ## Backend 계약 개선 후보
 
 - 이벤트 조치 이력 `/events/{id}/actions`에 서버 측 limit/cursor와 최신순 정렬을 추가한다. 현재는 전체 이력을 반환하므로 새 이벤트 상세 도구의 `include:["actions"]`는 `unsupported`다.

@@ -28,6 +28,7 @@ type ServerConfig struct {
 	HTTPAddress    string
 	AllowedOrigins []string
 	AuthStore      string
+	Dynamic        DynamicConfig
 }
 
 type fileConfig struct {
@@ -44,6 +45,7 @@ type fileConfig struct {
 	logLevel       string
 	sampleEnabled  string
 	sampleTopics   []string
+	dynamic        dynamicFile
 }
 
 // LoadServer는 지정한 파일만 읽으며 프로세스 환경변수를 변경하지 않는다.
@@ -82,6 +84,10 @@ func LoadServer(path string, getenv func(string) string, overrides ServerOverrid
 		if err != nil {
 			return ServerConfig{}, err
 		}
+	}
+	cfg.Dynamic, err = loadDynamic(file.dynamic, getenv)
+	if err != nil {
+		return ServerConfig{}, err
 	}
 	return cfg, nil
 }
@@ -210,7 +216,11 @@ func validTokenEnvName(value string) bool {
 		return false
 	}
 	// 설정 읽기가 토큰 환경변수를 우회 조회하지 않도록 기존 설정 이름을 예약한다.
-	for _, reserved := range []string{"ABLEOPS_BASE_URL", "ABLEOPS_ALLOW_HTTP", "ABLEOPS_REQUEST_TIMEOUT", "ABLEOPS_CA_FILE", "MCP_AUTH_STORE", "MCP_LOG_LEVEL", "ABLEOPS_MESSAGE_SAMPLE_ENABLED", "ABLEOPS_MESSAGE_SAMPLE_TOPICS"} {
+	for _, reserved := range []string{
+		"ABLEOPS_BASE_URL", "ABLEOPS_ALLOW_HTTP", "ABLEOPS_REQUEST_TIMEOUT", "ABLEOPS_CA_FILE", "MCP_AUTH_STORE", "MCP_LOG_LEVEL",
+		"ABLEOPS_MESSAGE_SAMPLE_ENABLED", "ABLEOPS_MESSAGE_SAMPLE_TOPICS",
+		envDynamicTools, envDynamicOperations, envDynamicRefreshInterval,
+	} {
 		if strings.EqualFold(value, reserved) {
 			return false
 		}
@@ -319,6 +329,17 @@ func readConfig(path string, getenv func(string) string) (fileConfig, error) {
 					}
 					return nil
 				},
+			})
+		},
+		"dynamic_tools": func(node *yaml.Node) error {
+			return readMapping(node, map[string]func(*yaml.Node) error{
+				"enabled": boolValue(&cfg.dynamic.enabled),
+				"operations": func(node *yaml.Node) error {
+					cfg.dynamic.operationsSet = true
+					cfg.dynamic.operations = []string{}
+					return stringList(&cfg.dynamic.operations)(node)
+				},
+				"refresh_interval": stringValue(&cfg.dynamic.refreshInterval),
 			})
 		},
 	})
