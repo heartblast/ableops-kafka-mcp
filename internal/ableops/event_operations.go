@@ -2,6 +2,7 @@ package ableops
 
 import (
 	"context"
+	"encoding/json"
 	"net/url"
 	"strconv"
 	"strings"
@@ -49,6 +50,23 @@ func (c *Client) GetEventSummary(ctx context.Context, clusterID string) (EventSu
 	if err := c.Get(ctx, []string{"events", "summary"}, url.Values{"clusterId": {clusterID}}, &out); err != nil {
 		return EventSummary{}, err
 	}
+	return projectEventSummary(out, clusterID)
+}
+
+// DecodeEventSummary는 백엔드 JSON 원문을 GetEventSummary와 같은 공개 계약으로 투영한다.
+// 동적 실행 경로가 REST 경로만 계약에서 가져오고 공개 범위·판정은 그대로 쓰게 하는 진입점이다.
+func DecodeEventSummary(body []byte, clusterID string) (EventSummary, error) {
+	var out EventSummary
+	if strings.TrimSpace(clusterID) == "" {
+		return out, publicError("invalid_request", 0)
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return EventSummary{}, publicError("invalid_response", 200)
+	}
+	return projectEventSummary(out, clusterID)
+}
+
+func projectEventSummary(out EventSummary, clusterID string) (EventSummary, error) {
 	if out.Scope == nil || out.Collection == nil || out.Scope.ClusterID != clusterID || out.GeneratedAt == "" {
 		return EventSummary{}, publicError("invalid_response", 200)
 	}

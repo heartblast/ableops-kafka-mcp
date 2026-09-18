@@ -4,6 +4,7 @@ AbleOps Backend의 `GET /openapi.json` 계약에서 조회 도구를 만들어 �
 
 - **1차**: `OpenAPI → Dynamic Tool 생성 → tools/list → tools/call → REST → MCP Result` 경로를 완성했다. [요청 문서](reference_docs/ableops-kafka-mcp-OpenAPI기반DynamicMCP-1차구현.md)
 - **2차**: 실행 중 계약 갱신(Hot Reload), Registry 원자적 교체, 도구 변경 알림(`tools/list_changed`), 노출 안전 게이트, Static/Dynamic 호환성 판정을 더했다. [요청 문서](reference_docs/DynamicMCP2차운영안정화개발.md)
+- **3차**: `get_event_summary`·`list_consumer_groups` 2개를 Stable Adapter로 Promotion했다. MCP 계약은 그대로 두고 REST 경로만 계약에서 가져온다. [요청 문서](reference_docs/DynamicMCP-3차.md)
 
 핵심 규칙은 다음과 같다.
 
@@ -24,7 +25,9 @@ internal/openapi           Parse: 계약 모델·Operation 단위 Issue
 internal/dynamic           ToolName → Compile(정의·바인딩 지문) → ClassifyExposure → Build(불변 Registry)
                            Runtime: Refresh·Run·apply(Diff·원자적 교체)·tools/list 직렬화 미들웨어
                            Executor(원문 전달) · AssessCompatibility(Static 전환 판정)
+internal/tools             DynamicSource 포트: 기존 도구가 operationId로 실행하는 Stable Adapter 경계
 internal/mcpserver         New(..., WithRuntime(rt) | WithDynamic(registry)) / NewDynamicComparison(비교용)
+                           Runtime.Adapter()를 tools.Register에 주입(Promotion)
 ```
 
 의존 방향은 `mcpserver → dynamic → openapi → ableops` 한 방향이다. Dynamic 경로도 기존 REST Client를 그대로 쓴다. 따라서 다음이 모두 Static 경로와 같다.
@@ -293,6 +296,63 @@ SAFE로 올리거나 내릴 때는 정책표, 이 표, `TestExposurePolicyCovers
 - 결과가 64 KiB(구조화)나 128 KiB(text 포함)를 넘으면 `body`를 **통째로 생략**하고 `output_too_large`를 반환한다. 원문을 잘라 부분 결과를 만들지 않는다. 필터·페이지 인자로 범위를 줄인다.
 - stderr 로그에는 도구·operationId·클러스터(`/api/clusters/{x}`의 x 또는 `clusterId`)·사용자·요청 ID·소요 시간·HTTP 상태·결과 코드만 남긴다. 인자 원문과 응답은 기록하지 않는다.
 - Static int64 반올림 결함(아래)과 달리 Dynamic 결과는 원문 JSON 숫자를 그대로 유지한다. 다만 SDK 클라이언트는 `structuredContent`를 `any`(float64)로 해석하므로 큰 정수가 **클라이언트 쪽에서** 반올림될 수 있다. 같은 JSON의 `text`에는 원문이 남는다.
+
+## Stable Adapter Promotion (3차)
+
+노출 판정(위 절)은 **Dynamic 도구를 그대로 LLM에 보여도 되는가**를 묻는다. Promotion은 다른 질문이다. **기존 MCP 도구 계약은 그대로 두고 내부 실행만 계약 기반으로 바꾼다.**
+
+```text
+기존 MCP Tool (이름·Input Schema·결과 봉투 그대로)
+    ↓
+Stable Adapter (internal/tools)
+    ↓ operationId
+Dynamic Registry (internal/dynamic)
+    ↓ REST 경로·파라미터
+Generic REST Executor (ableops.Client.GetRaw)
+    ↓
+AbleOps REST API
+    ↓ 기존 공개 계약으로 Projection (ableops.Decode*)
+기존 MCP 결과 계약
+```
+
+REST 경로는 어댑터에 하드코딩하지 않고 Registry에서 가져온다. 응답 원문은 그대로 내보내지 않고 Static과 **같은** 투영 함수를 지난다. 같은 이름의 Dynamic 도구를 따로 등록하지 않으므로 중복 노출도 없다.
+
+의존 방향은 그대로다. `internal/tools`는 포트(`tools.DynamicSource`·`tools.ErrDynamicUnavailable`)만 정의하고 operationId만 알며 REST 경로는 모른다. 구현(`dynamic.Adapter`)은 `mcpserver.New`가 주입한다.
+
+### 전환한 도구 (2개)
+
+| MCP 도구 | operationId | 입력 변환 | 응답 투영 | 유지한 의미 |
+| --- | --- | --- | --- | --- |
+| `get_event_summary` | `getEventSummary` | `cluster_id` → query `clusterId` | `ableops.DecodeEventSummary` | `cluster_id` 필수(권한 범위 합산으로 넓히지 않음), `scope.clusterId` 대조, `clusterDenied`·허용 범위 0 → `access_denied`, `monitoredClusters=0` → `not_found`, 음수 집계 거부, `collection.enabled=false` → `partial`·`collection_disabled`, 기존 공개 필드와 제한 설명 |
+| `list_consumer_groups` | `listConsumerGroups` | `cluster_id` → path `id` | `ableops.DecodeConsumerGroups` | `clusterId` 대조, `syncedAt=null` → `partial`, `topicLag` limit 절단, 기존 스냅샷 봉투·제한 설명 |
+
+Registry 조회는 `LookupOperation`으로 하며 노출 선택 목록(`operations` 설정)이나 배치와 무관하다. Promotion은 도구를 새로 노출하지 않기 때문이다. 다만 노출 안전 게이트가 `BLOCKED`로 분류한 Operation은 어떤 경로로도 실행하지 않는다.
+
+### Dynamic ON/OFF와 Fallback
+
+| 상황 | 동작 |
+| --- | --- |
+| Dynamic OFF(`dynamic.enabled=false`) | 기존 Static 경로 그대로 |
+| Dynamic ON, 계약 적재 성공 | 계약의 REST 경로로 실행 |
+| 계약 미적재·`operationId` 부재·계약 파라미터 불일치·`BLOCKED` | Dynamic 인프라 사용 불가로 보고 기존 Static 경로 사용 |
+| 백엔드 4xx / 5xx / timeout | 그대로 오류 반환. **Static으로 재호출하지 않는다**(호출 1회) |
+
+비슷한 이름의 operationId를 추측하지 않는다. 계약에 없으면 Promotion을 쓰지 않는다.
+
+REST 경로가 계약에서 바뀌어도 `operationId`가 같으면 MCP 도구 계약(이름·Input Schema·설명·주석)은 그대로이고 다음 조회부터 새 경로를 쓴다. Hot Reload 경로(`Runtime.Refresh`)를 그대로 쓰므로 별도 재기동이 필요 없다.
+
+### 검증
+
+`internal/mcpserver/promotion_test.go`
+
+- `TestPromotedToolsKeepMCPContract`: Dynamic ON/OFF의 도구 정의가 완전히 같고, 도구 수가 Static과 같으며 중복 노출이 없다
+- `TestPromotedToolsUseDynamicExecutor`: 계약 경로로 실행, `cluster_id` → `id` 변환, 공개 범위 밖 필드 미노출
+- `TestPromotedToolsFollowContractPath`: 계약의 경로만 바꿔도 MCP 계약은 그대로이고 새 경로로 조회
+- `TestPromotedToolsFallBackWhenOperationMissing`: `operationId` 부재 시 Static 경로
+- `TestPromotedToolsDoNotRetryOnBackendFailure`: 401·403·404·500·timeout에서 백엔드 호출 1회
+- `TestPromotedToolsUseStaticWhenDynamicOff`: Dynamic OFF에서 Static 경로
+
+`internal/dynamic/adapter_test.go`는 계약 미적재·미상 operationId·`BLOCKED` 거부를 본다.
 
 ## Static/Dynamic 호환성 (전환 판정)
 

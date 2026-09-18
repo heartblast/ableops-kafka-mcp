@@ -61,3 +61,7 @@ func statusError(status int) *Error {
 		return publicError("backend_error", status)
 	}
 }
+
+// PublicError는 같은 고정 문구 규칙으로 오류를 만드는 패키지 외부 진입점이다.
+// 동적 실행 경로(internal/dynamic)가 Static 경로와 같은 코드·문구를 쓰게 한다.
+func PublicError(code string, status int) *Error { return publicError(code, status) }

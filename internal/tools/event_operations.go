@@ -102,7 +102,7 @@ func (s *service) eventSummary(ctx context.Context, input EventSummaryInput) Env
 	if !validEventOperationsCluster(input.ClusterID) {
 		return invalid(out, "cluster_id는 공백 없는 1~255자 식별자여야 합니다.")
 	}
-	data, err := s.client.GetEventSummary(ctx, input.ClusterID)
+	data, err := s.eventSummaryData(ctx, input.ClusterID)
 	if err != nil {
 		return failed(out, err, "event_summary")
 	}
@@ -234,4 +234,18 @@ func (s *service) maintenanceWindows(ctx context.Context, input MaintenanceWindo
 	}
 	bound(&out, func() bool { changed := shrinkItems(&data.Items); data.Returned = len(data.Items); return changed })
 	return out
+}
+
+// eventSummaryData는 이벤트 요약을 가져온다. Dynamic 경로를 쓸 수 있으면 계약의
+// getEventSummary 경로로 조회하고(MCP `cluster_id` → 계약 `clusterId`), 결과는 Static과 같은
+// 공개 계약으로 투영한다. 백엔드 실패는 Static으로 재호출하지 않는다.
+func (s *service) eventSummaryData(ctx context.Context, clusterID string) (ableops.EventSummary, error) {
+	body, used, err := s.fetch(ctx, OperationEventSummary, map[string]any{"clusterId": clusterID})
+	if !used {
+		return s.client.GetEventSummary(ctx, clusterID)
+	}
+	if err != nil {
+		return ableops.EventSummary{}, err
+	}
+	return ableops.DecodeEventSummary(body, clusterID)
 }

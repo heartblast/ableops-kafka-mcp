@@ -229,6 +229,18 @@ func (r *Registry) Lookup(name string) (Entry, bool) {
 	return r.entries[i], true
 }
 
+// LookupOperation은 operationId로 항목을 찾는다. 배치(선택 여부·노출)와 무관하게 컴파일을
+// 통과한 항목 전체를 본다. 기존 MCP 계약을 유지하는 Stable Adapter는 Dynamic 도구를 새로
+// 노출하지 않으므로 노출 선택 목록에 매이지 않는다.
+func (r *Registry) LookupOperation(id string) (Entry, bool) {
+	for _, entry := range r.entries {
+		if entry.Tool.Operation.ID == id {
+			return entry, true
+		}
+	}
+	return Entry{}, false
+}
+
 // Exposed는 기본 서버에 추가할 도구다.
 func (r *Registry) Exposed() []*Tool { return r.filter(PlacementExposed) }
 
