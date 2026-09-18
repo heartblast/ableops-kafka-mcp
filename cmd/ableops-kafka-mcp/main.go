@@ -146,6 +146,13 @@ func run() int {
 		err = mcpserver.RunStdio(ctx, server)
 	}
 	if err != nil && !errors.Is(err, context.Canceled) {
+		// 기동 단계 오류는 이 리포지토리가 만든 고정 문구라 외부 입력을 담지 않는다.
+		// 원인을 감추면 운영자는 조치할 수 없는 protocol_error 만 보게 되므로 그대로 남긴다.
+		var startup *mcpserver.StartupError
+		if errors.As(err, &startup) {
+			logger.Error("MCP 서버 기동 실패", "code", "startup_error", "reason", startup.Error())
+			return 1
+		}
 		// SDK 오류에 원본 입력이 포함될 수 있어 원문은 로그에 남기지 않는다.
 		logger.Error("MCP 연결 종료", "code", "protocol_error")
 		return 1
