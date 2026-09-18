@@ -38,3 +38,12 @@ dynamic_tools:
   # operations: ['getTopicPartitions', 'getEventSummary', 'getBranding']
   # 계약 변경 확인 주기입니다. 기본 5m, 허용 1m~24h.
   # refresh_interval: '5m'
+# AbleOps Web/Chat Backend 전용 단기 위임(선택). 기본 false입니다.
+# true로 켜면 POST /internal/delegations 가 열립니다 — loopback 서버간 전용이며 브라우저는
+# 직접 호출할 수 없습니다. 공유 비밀은 YAML이 아니라 환경변수로만 주입합니다(32바이트 이상).
+web_delegation:
+  enabled: false
+  # 위임 수명입니다. 기본 10m, 허용 1m~30m.
+  # ttl: '10m'
+  # 공유 비밀을 읽을 환경변수 이름입니다. 생략하면 ABLEOPS_WEB_DELEGATION_SECRET 입니다.
+  # secret_env: 'ABLEOPS_WEB_DELEGATION_SECRET'

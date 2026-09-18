@@ -24,9 +24,15 @@ import (
 
 // HTTPOptions는 로컬 인증 모드의 HTTP 전송과 자원 제한을 설정한다.
 type HTTPOptions struct {
-	Address              string
-	AllowedOrigins       []string
-	Authenticate         func(context.Context, string) (requestctx.Principal, error)
+	Address        string
+	AllowedOrigins []string
+	Authenticate   func(context.Context, string) (requestctx.Principal, error)
+	// InternalSecret은 서버간 위임 발급 엔드포인트의 공유 비밀이다.
+	// ⚠ 비어 있으면 `/internal/**` 은 존재하지 않는다(404) — 기본값은 "기능 없음"이다.
+	InternalSecret string
+	// IssueDelegation은 Web Backend 세션을 단기 MCP 위임으로 바꾼다(internal_delegation.go).
+	// nil 이면 내부 엔드포인트를 배선하지 않는다. `/mcp` 인증과는 독립이다.
+	IssueDelegation      IssueDelegationFunc
 	Logger               *slog.Logger
 	MaxRequestBytes      int64
 	MaxConcurrent        int
@@ -52,6 +58,14 @@ func (o HTTPOptions) normalized() (HTTPOptions, error) {
 	}
 	if o.Authenticate == nil {
 		return o, errors.New("HTTP 요청별 인증기가 필요합니다")
+	}
+	// 반쪽 배선은 거부한다. 비밀만 있고 발급기가 없으면 운영자는 켰다고 믿는데 404 가 나가고,
+	// 발급기만 있고 비밀이 없으면 인증 없는 발급 경로가 열린다.
+	if (o.IssueDelegation != nil) != (o.InternalSecret != "") {
+		return o, errors.New("서버간 위임 발급에는 공유 비밀과 발급기가 모두 필요합니다")
+	}
+	if o.InternalSecret != "" && len(o.InternalSecret) < minInternalSecretBytes {
+		return o, errors.New("서버간 공유 비밀은 32바이트 이상이어야 합니다")
 	}
 	if o.MaxRequestBytes < 0 || o.MaxConcurrent < 0 || o.MaxConcurrentPerUser < 0 || o.RequestTimeout < 0 || o.ReadHeaderTimeout < 0 || o.ReadTimeout < 0 || o.IdleTimeout < 0 || o.WriteIdleTimeout < 0 || o.ShutdownTimeout < 0 || o.MaxHeaderBytes < 0 {
 		return o, errors.New("HTTP 제한은 양수여야 합니다")
@@ -162,6 +176,20 @@ func NewHTTPHandler(server *mcp.Server, opts HTTPOptions) (http.Handler, error) 
 		fail := func(status int, failure string) { code = failure; http.Error(w, failure, status) }
 		if !loopbackHost(r.Host) {
 			fail(http.StatusForbidden, "invalid_host")
+			return
+		}
+		// 서버간 전용 경로는 CORS 허용 블록보다 **먼저** 갈라낸다. 허용 Origin 인 Web UI 라도
+		// 이 경로에는 닿지 않아야 하고, 응답에 Access-Control-* 가 붙어서도 안 된다.
+		if strings.HasPrefix(r.URL.Path, internalPathPrefix) {
+			select {
+			case global <- struct{}{}:
+				defer func() { <-global }()
+			default:
+				w.Header().Set("Retry-After", "1")
+				fail(http.StatusTooManyRequests, "global_limit")
+				return
+			}
+			userID, clientID = serveInternalDelegation(w, r, opts, fail), "internal-delegation"
 			return
 		}
 		origin := r.Header.Get("Origin")
