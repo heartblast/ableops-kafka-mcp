@@ -16,17 +16,33 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/heartblast/ableops-kafka-mcp/internal/requestctx"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+// StartupError는 이 리포지토리가 직접 만든 기동 단계 오류다. 문구는 고정이며 설정값·요청
+// 본문·SDK 오류 원문 같은 외부 입력을 담지 않는다. 그래서 호출자가 그대로 로그에 남겨도
+// 안전하다 — 원인을 감추면 운영자는 재현되지 않는 protocol_error 만 보게 된다.
+type StartupError struct{ Message string }
+
+func (e *StartupError) Error() string { return e.Message }
+
+func startupError(message string) error { return &StartupError{Message: message} }
+
 // HTTPOptions는 로컬 인증 모드의 HTTP 전송과 자원 제한을 설정한다.
 type HTTPOptions struct {
-	Address              string
-	AllowedOrigins       []string
-	Authenticate         func(context.Context, string) (requestctx.Principal, error)
+	Address        string
+	AllowedOrigins []string
+	Authenticate   func(context.Context, string) (requestctx.Principal, error)
+	// InternalSecret은 서버간 위임 발급 엔드포인트의 공유 비밀이다.
+	// ⚠ 비어 있으면 `/internal/**` 은 존재하지 않는다(404) — 기본값은 "기능 없음"이다.
+	InternalSecret string
+	// IssueDelegation은 Web Backend 세션을 단기 MCP 위임으로 바꾼다(internal_delegation.go).
+	// nil 이면 내부 엔드포인트를 배선하지 않는다. `/mcp` 인증과는 독립이다.
+	IssueDelegation      IssueDelegationFunc
 	Logger               *slog.Logger
 	MaxRequestBytes      int64
 	MaxConcurrent        int
@@ -48,13 +64,21 @@ func (o HTTPOptions) normalized() (HTTPOptions, error) {
 	ip := net.ParseIP(host)
 	p, portErr := strconv.Atoi(port)
 	if err != nil || ip == nil || !ip.IsLoopback() || portErr != nil || p < 0 || p > 65535 {
-		return o, errors.New("로컬 HTTP 주소는 포트를 포함한 loopback IP여야 합니다")
+		return o, startupError("로컬 HTTP 주소는 포트를 포함한 loopback IP여야 합니다")
 	}
 	if o.Authenticate == nil {
-		return o, errors.New("HTTP 요청별 인증기가 필요합니다")
+		return o, startupError("HTTP 요청별 인증기가 필요합니다")
+	}
+	// 반쪽 배선은 거부한다. 비밀만 있고 발급기가 없으면 운영자는 켰다고 믿는데 404 가 나가고,
+	// 발급기만 있고 비밀이 없으면 인증 없는 발급 경로가 열린다.
+	if (o.IssueDelegation != nil) != (o.InternalSecret != "") {
+		return o, startupError("서버간 위임 발급에는 공유 비밀과 발급기가 모두 필요합니다")
+	}
+	if o.InternalSecret != "" && len(o.InternalSecret) < minInternalSecretBytes {
+		return o, startupError("서버간 공유 비밀은 32바이트 이상이어야 합니다")
 	}
 	if o.MaxRequestBytes < 0 || o.MaxConcurrent < 0 || o.MaxConcurrentPerUser < 0 || o.RequestTimeout < 0 || o.ReadHeaderTimeout < 0 || o.ReadTimeout < 0 || o.IdleTimeout < 0 || o.WriteIdleTimeout < 0 || o.ShutdownTimeout < 0 || o.MaxHeaderBytes < 0 {
-		return o, errors.New("HTTP 제한은 양수여야 합니다")
+		return o, startupError("HTTP 제한은 양수여야 합니다")
 	}
 	if o.MaxRequestBytes == 0 {
 		o.MaxRequestBytes = 64 << 10
@@ -92,7 +116,7 @@ func (o HTTPOptions) normalized() (HTTPOptions, error) {
 	for _, origin := range o.AllowedOrigins {
 		u, err := url.Parse(origin)
 		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.Opaque != "" || strings.ContainsAny(origin, "*?#") || u.String() != origin {
-			return o, errors.New("허용 Origin은 경로 없는 정확한 HTTP 또는 HTTPS 출처여야 합니다")
+			return o, startupError("허용 Origin은 경로 없는 정확한 HTTP 또는 HTTPS 출처여야 합니다")
 		}
 	}
 	return o, nil
@@ -104,7 +128,7 @@ type httpRequestContextKey struct{}
 // 동일 서버에는 초기화 시 한 번만 적용한다.
 func NewHTTPHandler(server *mcp.Server, opts HTTPOptions) (http.Handler, error) {
 	if server == nil {
-		return nil, errors.New("MCP 서버가 필요합니다")
+		return nil, startupError("MCP 서버가 필요합니다")
 	}
 	opts, err := opts.normalized()
 	if err != nil {
@@ -162,6 +186,20 @@ func NewHTTPHandler(server *mcp.Server, opts HTTPOptions) (http.Handler, error) 
 		fail := func(status int, failure string) { code = failure; http.Error(w, failure, status) }
 		if !loopbackHost(r.Host) {
 			fail(http.StatusForbidden, "invalid_host")
+			return
+		}
+		// 서버간 전용 경로는 CORS 허용 블록보다 **먼저** 갈라낸다. 허용 Origin 인 Web UI 라도
+		// 이 경로에는 닿지 않아야 하고, 응답에 Access-Control-* 가 붙어서도 안 된다.
+		if strings.HasPrefix(r.URL.Path, internalPathPrefix) {
+			select {
+			case global <- struct{}{}:
+				defer func() { <-global }()
+			default:
+				w.Header().Set("Retry-After", "1")
+				fail(http.StatusTooManyRequests, "global_limit")
+				return
+			}
+			userID, clientID = serveInternalDelegation(w, r, opts, fail), "internal-delegation"
 			return
 		}
 		origin := r.Header.Get("Origin")
@@ -450,9 +488,24 @@ func RunHTTP(ctx context.Context, server *mcp.Server, opts HTTPOptions) error {
 	}
 	listener, err := net.Listen("tcp", opts.Address)
 	if err != nil {
-		return errors.New("HTTP loopback 수신 주소를 열 수 없습니다")
+		// 포트 중복은 기동 실패 중 가장 흔하고 조치도 다르다(이전 프로세스 종료 vs 설정 수정).
+		// 오류 원문에는 수신 주소가 섞여 들어오므로 그대로 쓰지 않고 분류만 한다.
+		if addressInUse(err) {
+			return startupError("HTTP loopback 수신 주소가 이미 사용 중입니다")
+		}
+		return startupError("HTTP loopback 수신 주소를 열 수 없습니다")
 	}
 	return serveHTTP(ctx, listener, handler, opts)
+}
+
+// addressInUse는 bind 충돌을 플랫폼과 무관하게 판별한다. Windows 의 net 은
+// WSAEADDRINUSE(10048)를 돌려주는데 그 값은 syscall.EADDRINUSE 와 다르므로 함께 본다.
+func addressInUse(err error) bool {
+	var errno syscall.Errno
+	if !errors.As(err, &errno) {
+		return false
+	}
+	return errno == syscall.EADDRINUSE || errno == 10048
 }
 
 func serveHTTP(ctx context.Context, listener net.Listener, handler http.Handler, opts HTTPOptions) error {
@@ -466,7 +519,7 @@ func serveHTTP(ctx context.Context, listener net.Listener, handler http.Handler,
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil
 		}
-		return errors.New("HTTP 수신이 중단되었습니다")
+		return startupError("HTTP 수신이 중단되었습니다")
 	case <-ctx.Done():
 		stopRequests()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), opts.ShutdownTimeout)
@@ -474,7 +527,7 @@ func serveHTTP(ctx context.Context, listener net.Listener, handler http.Handler,
 		if err := server.Shutdown(shutdownCtx); err != nil {
 			_ = server.Close()
 			<-stopped
-			return errors.New("HTTP 정상 종료 제한 시간을 초과했습니다")
+			return startupError("HTTP 정상 종료 제한 시간을 초과했습니다")
 		}
 		<-stopped
 		return ctx.Err()

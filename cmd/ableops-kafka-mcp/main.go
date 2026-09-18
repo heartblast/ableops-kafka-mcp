@@ -19,6 +19,7 @@ import (
 	"github.com/heartblast/ableops-kafka-mcp/internal/openapi"
 	"github.com/heartblast/ableops-kafka-mcp/internal/requestctx"
 	"github.com/heartblast/ableops-kafka-mcp/internal/tools"
+	"github.com/heartblast/ableops-kafka-mcp/internal/webdelegation"
 )
 
 func main() {
@@ -110,28 +111,65 @@ func run() int {
 		logger.Info("동적 도구 계약 주기 갱신 시작", "interval", runtimeConfig.Dynamic.RefreshInterval.String())
 	}
 	if runtimeConfig.Transport == "http" {
-		store, storeErr := localauth.NewStore(runtimeConfig.AuthStore, func(ctx context.Context, token string) (string, error) {
-			p, _ := requestctx.FromContext(ctx)
-			p.BackendToken = token
-			return client.CurrentUserID(requestctx.WithPrincipal(ctx, p))
-		})
+		store, storeErr := localauth.NewStore(runtimeConfig.AuthStore, verifyBackend(client))
 		if storeErr != nil {
 			logger.Error("로컬 인증 저장소 초기화 실패", "code", "auth_configuration_error")
 			return 1
 		}
+		options := mcpserver.HTTPOptions{Address: runtimeConfig.HTTPAddress, AllowedOrigins: runtimeConfig.AllowedOrigins, Authenticate: store.Authenticate, Logger: logger}
+		if runtimeConfig.WebDelegation.Enabled {
+			delegations, delegationErr := webdelegation.NewStore(verifyBackend(client), runtimeConfig.WebDelegation.TTL)
+			if delegationErr != nil {
+				logger.Error("Web 위임 저장소 초기화 실패", "code", "delegation_configuration_error")
+				return 1
+			}
+			// 인증 Provider 는 **교체가 아니라 추가**다. 위임 토큰 접두사만 새 저장소로 보내고
+			// 나머지(Claude Desktop·Codex 등 기존 local 토큰)는 그대로 localauth 로 간다.
+			options.Authenticate = func(ctx context.Context, token string) (requestctx.Principal, error) {
+				if webdelegation.ValidToken(token) {
+					return delegations.Authenticate(ctx, token)
+				}
+				return store.Authenticate(ctx, token)
+			}
+			options.InternalSecret = runtimeConfig.WebDelegation.Secret
+			options.IssueDelegation = func(ctx context.Context, backendToken string) (mcpserver.DelegationGrant, error) {
+				grant, err := delegations.Issue(ctx, backendToken)
+				return mcpserver.DelegationGrant{Token: grant.Token, UserID: grant.UserID, ExpiresAt: grant.ExpiresAt}, err
+			}
+			// TTL 만 남긴다 — 비밀·토큰은 어떤 수준에서도 로그에 넣지 않는다.
+			logger.Info("Web 세션 위임 발급 활성", "ttl", runtimeConfig.WebDelegation.TTL.String())
+		}
 		logger.Info("MCP 로컬 HTTP 서버 시작", "version", "0.1.0")
-		err = mcpserver.RunHTTP(ctx, server, mcpserver.HTTPOptions{Address: runtimeConfig.HTTPAddress, AllowedOrigins: runtimeConfig.AllowedOrigins, Authenticate: store.Authenticate, Logger: logger})
+		err = mcpserver.RunHTTP(ctx, server, options)
 	} else {
 		logger.Info("MCP stdio 서버 시작", "version", "0.1.0")
 		err = mcpserver.RunStdio(ctx, server)
 	}
 	if err != nil && !errors.Is(err, context.Canceled) {
+		// 기동 단계 오류는 이 리포지토리가 만든 고정 문구라 외부 입력을 담지 않는다.
+		// 원인을 감추면 운영자는 조치할 수 없는 protocol_error 만 보게 되므로 그대로 남긴다.
+		var startup *mcpserver.StartupError
+		if errors.As(err, &startup) {
+			logger.Error("MCP 서버 기동 실패", "code", "startup_error", "reason", startup.Error())
+			return 1
+		}
 		// SDK 오류에 원본 입력이 포함될 수 있어 원문은 로그에 남기지 않는다.
 		logger.Error("MCP 연결 종료", "code", "protocol_error")
 		return 1
 	}
 	logger.Info("MCP 서버 종료")
 	return 0
+}
+
+// verifyBackend는 기존 REST Client 로 Backend 세션을 확인하는 검사기를 만든다.
+// localauth 와 webdelegation 이 **같은 검사기**를 쓴다 — 세션 유효성 판정이 두 벌이 되면
+// 한쪽에서만 로그아웃이 반영되는 상태가 생긴다.
+func verifyBackend(client *ableops.Client) func(context.Context, string) (string, error) {
+	return func(ctx context.Context, token string) (string, error) {
+		p, _ := requestctx.FromContext(ctx)
+		p.BackendToken = token
+		return client.CurrentUserID(requestctx.WithPrincipal(ctx, p))
+	}
 }
 
 // newDynamicRuntime은 계약 조회기와 Registry 구성을 묶은 런타임을 만든다. 계약은 아직 조회하지 않는다.

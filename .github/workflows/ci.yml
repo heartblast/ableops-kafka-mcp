@@ -36,4 +36,4 @@ jobs:
         if: runner.os == 'Linux'
         env:
           CGO_ENABLED: '1'
-        run: go test -race ./internal/ableops ./internal/tools ./internal/config ./internal/localauth ./internal/mcpserver ./internal/openapi ./internal/dynamic ./cmd/ableops-mcp-auth
+        run: go test -race ./internal/ableops ./internal/tools ./internal/config ./internal/localauth ./internal/webdelegation ./internal/mcpserver ./internal/openapi ./internal/dynamic ./cmd/ableops-mcp-auth

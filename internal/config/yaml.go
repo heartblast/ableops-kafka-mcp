@@ -29,6 +29,8 @@ type ServerConfig struct {
 	AllowedOrigins []string
 	AuthStore      string
 	Dynamic        DynamicConfig
+	// WebDelegation은 Web/Chat Backend 전용 단기 위임 설정이다(기본 비활성).
+	WebDelegation WebDelegationConfig
 }
 
 type fileConfig struct {
@@ -46,6 +48,7 @@ type fileConfig struct {
 	sampleEnabled  string
 	sampleTopics   []string
 	dynamic        dynamicFile
+	webDelegation  webDelegationFile
 }
 
 // LoadServer는 지정한 파일만 읽으며 프로세스 환경변수를 변경하지 않는다.
@@ -88,6 +91,14 @@ func LoadServer(path string, getenv func(string) string, overrides ServerOverrid
 	cfg.Dynamic, err = loadDynamic(file.dynamic, getenv)
 	if err != nil {
 		return ServerConfig{}, err
+	}
+	cfg.WebDelegation, err = loadWebDelegation(file.webDelegation, getenv)
+	if err != nil {
+		return ServerConfig{}, err
+	}
+	if cfg.WebDelegation.Enabled && cfg.Transport != "http" {
+		// stdio 에는 받을 HTTP 경로가 없다. 조용히 무시하면 운영자는 켰다고 믿는다.
+		return ServerConfig{}, errors.New("서버간 위임 발급은 http 전송에서만 사용할 수 있습니다")
 	}
 	return cfg, nil
 }
@@ -326,6 +337,21 @@ func readConfig(path string, getenv func(string) string) (fileConfig, error) {
 						if strings.Contains(topic, ",") {
 							return errors.New("샘플 허용 토픽의 각 항목에 쉼표를 사용할 수 없습니다")
 						}
+					}
+					return nil
+				},
+			})
+		},
+		"web_delegation": func(node *yaml.Node) error {
+			return readMapping(node, map[string]func(*yaml.Node) error{
+				"enabled": boolValue(&cfg.webDelegation.enabled),
+				"ttl":     stringValue(&cfg.webDelegation.ttl),
+				"secret_env": func(node *yaml.Node) error {
+					if err := stringValue(&cfg.webDelegation.secretEnv)(node); err != nil {
+						return err
+					}
+					if !validSecretEnvName(cfg.webDelegation.secretEnv) {
+						return errors.New("설정 파일 web_delegation.secret_env에는 기존 설정과 충돌하지 않는 환경변수 이름이 필요합니다")
 					}
 					return nil
 				},
