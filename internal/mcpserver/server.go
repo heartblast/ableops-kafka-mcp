@@ -48,14 +48,18 @@ func New(client *ableops.Client, logger *slog.Logger, options ...Option) *mcp.Se
 		instructions += dynamicInstructions
 	}
 	server := newServer("ableops-kafka-mcp", instructions, client)
-	static := tools.Register(server, client, logger)
 	runtime := opts.runtime
 	if runtime == nil && opts.dynamic != nil {
-		runtime = dynamic.NewRuntime(client, logger, nil, dynamic.Options{StaticToolNames: static})
+		// Bind가 실제 Static 도구 이름을 예약하므로 여기서는 목록을 다시 넘기지 않는다.
+		runtime = dynamic.NewRuntime(client, logger, nil, dynamic.Options{})
 	}
 	if runtime == nil {
+		tools.Register(server, client, logger)
 		return server
 	}
+	// Promotion된 Static 도구는 이름·Input Schema를 그대로 두고 내부 실행만 이 어댑터로 한다.
+	// 같은 이름의 Dynamic 도구를 따로 등록하지 않으므로 중복 노출은 생기지 않는다.
+	static := tools.Register(server, client, logger, tools.WithDynamic(runtime.Adapter()))
 	if opts.dynamic != nil {
 		runtime.Install(opts.dynamic)
 	}

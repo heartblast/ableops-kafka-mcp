@@ -18,15 +18,20 @@ type service struct {
 	client *ableops.Client
 	logger *slog.Logger
 	names  []string
+	// dynamic은 Promotion된 도구가 쓰는 Dynamic 실행 경로다. nil이면 모두 Static 경로를 쓴다.
+	dynamic DynamicSource
 }
 
 // Register는 전송과 무관하게 조회 도구와 입력·출력 스키마를 등록하고 등록한 도구 이름을 돌려준다.
 // Dynamic 도구가 같은 이름으로 Static 도구를 덮어쓰지 않도록 이 목록을 예약 이름으로 쓴다.
-func Register(server *mcp.Server, client *ableops.Client, logger *slog.Logger) []string {
+func Register(server *mcp.Server, client *ableops.Client, logger *slog.Logger, options ...Option) []string {
 	if logger == nil {
 		logger = slog.New(slog.NewJSONHandler(io.Discard, nil))
 	}
 	s := &service{client: client, logger: logger}
+	for _, option := range options {
+		option(s)
+	}
 	register(server, s, "list_clusters", "현재 사용자에게 허용된 클러스터를 조회합니다. 클러스터 인증 설정은 반환하지 않습니다.", inputSchema(false, false, false), func(ListInput) string { return "" }, s.listClusters)
 	register(server, s, "get_cluster_health", "지정 클러스터의 연결 상태와 파티션 건강 판정을 함께 조회합니다. 부분 실패와 백엔드 판정을 보존합니다.", inputSchema(true, false, false), func(i ClusterInput) string { return i.ClusterID }, s.clusterHealth)
 	registerWithAnnotations(server, s, "list_topics", "지정 클러스터의 백엔드 토픽 스냅샷을 조회합니다. synced_at이 없으면 신선도와 조회 완전성을 확인할 수 없습니다.", inputSchema(true, false, false), func(i ClusterInput) string { return i.ClusterID }, &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: false}, s.listTopics)
@@ -156,7 +161,7 @@ func (s *service) listGroups(ctx context.Context, input ClusterInput) Envelope[S
 	if !validCluster(input.ClusterID) {
 		return invalid(out, "cluster_id를 명시해야 합니다.")
 	}
-	snapshot, err := s.client.ListConsumerGroups(ctx, input.ClusterID)
+	snapshot, err := s.consumerGroups(ctx, input.ClusterID)
 	if err != nil {
 		return failed(out, err, "consumer_groups")
 	}
@@ -176,4 +181,18 @@ func (s *service) listGroups(ctx context.Context, input ClusterInput) Envelope[S
 		}
 	}
 	return snapshotResult(out, snapshot, input.Limit)
+}
+
+// consumerGroups는 Consumer Group 스냅샷을 가져온다. Dynamic 경로를 쓸 수 있으면 계약의
+// listConsumerGroups 경로로 조회하고(MCP `cluster_id` → 계약 `id`), 결과는 Static과 같은
+// 공개 계약으로 투영한다. 백엔드 실패는 Static으로 재호출하지 않는다.
+func (s *service) consumerGroups(ctx context.Context, clusterID string) (ableops.Snapshot[ableops.ConsumerGroup], error) {
+	body, used, err := s.fetch(ctx, OperationListConsumerGroup, map[string]any{"id": clusterID})
+	if !used {
+		return s.client.ListConsumerGroups(ctx, clusterID)
+	}
+	if err != nil {
+		return ableops.Snapshot[ableops.ConsumerGroup]{}, err
+	}
+	return ableops.DecodeConsumerGroups(body, clusterID)
 }

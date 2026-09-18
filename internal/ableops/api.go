@@ -2,6 +2,7 @@ package ableops
 
 import (
 	"context"
+	"encoding/json"
 	"net/url"
 	"strconv"
 	"strings"
@@ -81,6 +82,23 @@ func (c *Client) ListConsumerGroups(ctx context.Context, id string) (Snapshot[Co
 	if err := c.getCluster(ctx, id, []string{"consumer-groups"}, nil, &out); err != nil {
 		return out, err
 	}
+	return projectConsumerGroups(out, id)
+}
+
+// DecodeConsumerGroups는 백엔드 JSON 원문을 ListConsumerGroups와 같은 공개 계약으로 투영한다.
+// 동적 실행 경로가 REST 경로만 계약에서 가져오고 공개 범위·대조 판정은 그대로 쓰게 하는 진입점이다.
+func DecodeConsumerGroups(body []byte, id string) (Snapshot[ConsumerGroup], error) {
+	var out Snapshot[ConsumerGroup]
+	if strings.TrimSpace(id) == "" {
+		return out, publicError("invalid_request", 0)
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return Snapshot[ConsumerGroup]{}, publicError("invalid_response", 200)
+	}
+	return projectConsumerGroups(out, id)
+}
+
+func projectConsumerGroups(out Snapshot[ConsumerGroup], id string) (Snapshot[ConsumerGroup], error) {
 	if out.ClusterID != id {
 		return Snapshot[ConsumerGroup]{}, publicError("invalid_response", 200)
 	}
