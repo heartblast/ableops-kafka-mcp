@@ -17,7 +17,7 @@
 - `internal/mcpserver`: 도구를 등록한 전송 독립 서버 생성. stdio 연결은 실행 진입점이 담당한다.
 - `internal/mcpserver/stdio.go`: stdio 전송 실행과 프로세스 종료 context를 개별 요청에 연결한다. SDK 기본 stdio 수명만으로 진행 중 요청이 취소된다고 가정하지 않는다.
 
-공식 MCP Go SDK v1.8.0을 고정하고 SDK 요구 버전인 Go 1.25.0을 사용한다. 기존 프로젝트의 모듈, Kafka 클라이언트, DB 드라이버, 정책 엔진을 가져오지 않는다. 로컬 `replace`, `go.work`, 별도 저장소, 공유 캐시, 수집 워커가 없다.
+공식 MCP Go SDK v1.8.0을 고정하고, Managed Process Extension 이 쓰는 AbleOps SDK `extension/v1` v1.0.0 이 요구하는 Go 1.27.0을 사용한다. 기존 프로젝트의 모듈, Kafka 클라이언트, DB 드라이버, 정책 엔진을 가져오지 않는다. 로컬 `replace`, `go.work`, 별도 저장소, 공유 캐시, 수집 워커가 없다.
 
 ## OpenAPI 기반 Dynamic 도구
 

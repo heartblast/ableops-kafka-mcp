@@ -6,7 +6,8 @@
 
 ## 요구 환경
 
-- 소스 빌드에는 Go **1.25.0 이상**이 필요합니다. 공식 [MCP Go SDK v1.8.0](https://github.com/modelcontextprotocol/go-sdk/releases/tag/v1.8.0)을 고정했습니다. [해당 버전 go.mod](https://github.com/modelcontextprotocol/go-sdk/blob/v1.8.0/go.mod)의 최소 Go 버전을 따릅니다. 배포본 실행에는 Go 설치가 필요하지 않습니다.
+- 소스 빌드에는 Go **1.27.0 이상**이 필요합니다. 공식 [MCP Go SDK v1.8.0](https://github.com/modelcontextprotocol/go-sdk/releases/tag/v1.8.0)을 고정했고, 최소 Go 버전은 AbleOps Managed Extension 이 쓰는 [AbleOps SDK](https://github.com/heartblast/ableops-sdk) `extension/v1` v1.0.0 의 요구(`go 1.27.0`)를 따릅니다. 배포본 실행에는 Go 설치가 필요하지 않습니다.
+- AbleOps SDK 는 비공개 저장소이므로 소스 빌드 시 `GOPRIVATE=github.com/heartblast/*` 와 해당 저장소 읽기 권한이 있는 Git 자격증명이 필요합니다. 공개 모듈 프록시로는 받을 수 없습니다.
 - 빌드 스크립트는 Windows PowerShell 5.1 이상 또는 PowerShell 7, Linux Bash를 지원합니다. CI는 Windows와 Linux에서 검증하도록 구성했습니다.
 - 실제 조회에는 접근 가능한 AbleOps Backend와 본인 계정의 유효한 API 세션 토큰이 필요합니다. 빌드와 테스트는 실제 Backend·Kafka·DB 없이 가능합니다.
 
