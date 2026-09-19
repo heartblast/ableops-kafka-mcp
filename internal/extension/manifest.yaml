@@ -1,0 +1,47 @@
+# AbleOps Kafka MCP — Managed Process Extension Manifest
+#
+# 이 파일은 go:embed 로 바이너리에 포함된다(manifest.go). Manifest 는 **데이터만** 선언한다 —
+# 코드·스크립트·시크릿을 담지 않는다. 특히 MCP 위임 공유 비밀은 Manifest 에도 설정에도 없다
+# (Extension 이 기동 시 프로세스 메모리에만 만든다 — extension.go 참조).
+apiVersion: ableops.io/extension/v1
+id: ableops-kafka-mcp
+name: AbleOps Kafka MCP
+version: 0.6.0
+description: AbleOps Kafka REST 계약을 MCP 도구로 노출하는 Managed Process Extension
+publisher: AbleOps
+
+# 외부 프로세스 Extension 계약(기동 핸드셰이크·호출 토큰·프록시)은 Core 1.8.0 에서 확정됐다.
+# 상한을 두는 이유는 major 가 오르면 그 계약을 다시 확인해야 하기 때문이다.
+requires:
+  core: ">=1.8.0 <2.0.0"
+
+# capability 를 하나도 선언하지 않는다.
+#
+# MCP 도구는 Host API(kafka.read·cluster.read 등)를 쓰지 않는다. 도구 호출은 전부 **요청한
+# 사용자의 Backend 세션**으로 AbleOps REST 를 직접 부르며(위임 토큰 → Backend 세션), 그것이
+# 사용자별 권한 검사가 유지되는 이유다. 쓰지도 않을 capability 를 선언하면 Core 가 이 프로세스에
+# Host API 토큰 권한을 더 넓게 내주게 된다.
+capabilities: []
+
+# 권한을 선언하지 않는다 — 아래 routes 가 비어 있어 Core 가 프록시로 여는 경로가 없다.
+permissions: []
+
+# kind: process → Core 가 bin/<GOOS>-<GOARCH>/ 의 실행 파일을 별도 프로세스로 기동한다.
+backend:
+  enabled: true
+  kind: process
+
+# MCP 는 일반 사용자 화면 Extension 이 아니다. 기여할 화면이 없다.
+frontend:
+  enabled: false
+  entry: ""
+
+# 공개 라우트를 선언하지 않는다.
+#
+# 이 Extension 의 `/mcp` 와 `/internal/delegations` 는 **Core 내부 전용**이다. Core 의
+# `/api/extensions/<id>` 공개 프록시는 브라우저에서 닿는 경로이고, 그 프록시는 Authorization
+# 헤더를 지운다(위임 Bearer 가 도달하지 못한다). MCP transport 로 쓰지 않는다는 계약과도 맞지
+# 않으므로 아예 노출하지 않는다 — Core 는 loopback 주소와 호출 토큰으로 직접 호출한다.
+routes: []
+
+menus: []

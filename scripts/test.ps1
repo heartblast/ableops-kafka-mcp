@@ -9,6 +9,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'go vet failed' }
     go build ./cmd/ableops-kafka-mcp
     if ($LASTEXITCODE -ne 0) { throw 'go build failed' }
+    go build ./cmd/ableops-kafka-mcp-extension
+    if ($LASTEXITCODE -ne 0) { throw 'go build (extension) failed' }
 } finally {
     Pop-Location
 }
