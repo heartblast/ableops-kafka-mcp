@@ -44,6 +44,13 @@ jobs:
         if: runner.os == 'Linux'
         shell: bash
         run: bash scripts/build.sh
+      # Managed Extension 패키지(*.ableops-ext) 검증은 대표 환경 하나에서만 한다.
+      # Linux 에서 linux/amd64·windows/amd64 를 CGO_ENABLED=0 으로 크로스 컴파일하므로
+      # Windows runner 에서 같은 패키지를 다시 만들 이유가 없다(스크립트 자체가 패키지를 검증한다).
+      - name: Build and verify Managed Extension package
+        if: runner.os == 'Linux'
+        shell: bash
+        run: bash scripts/build-extension.sh
       - name: Check authentication and concurrency races
         if: runner.os == 'Linux'
         env:

@@ -3,6 +3,8 @@
 !.env.example
 /bin/
 /dist/
+# Extension 패키징 스테이지(scripts/build-extension.*)
+/build/
 /ableops-kafka-mcp
 /ableops-mcp-auth
 /.work/

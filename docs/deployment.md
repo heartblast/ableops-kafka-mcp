@@ -2,6 +2,8 @@
 
 이 프로젝트는 기존 AbleOps REST API를 호출하여 조회·미리보기 도구 33개를 제공하는 stdio/로컬 HTTP MCP 서버와 로컬 인증 관리 CLI입니다. 최신 소스로 빌드한 대상 OS와 CPU 아키텍처의 배포 폴더를 복사하면 사용할 수 있으며 **Go 설치는 필요하지 않습니다**. `amd64`는 x64, `arm64`는 ARM64용입니다. 이전에 생성한 `dist` 실행파일에는 이후 소스 변경이 자동 반영되지 않으므로 배포 전 다시 빌드해야 합니다.
 
+이 문서는 **Standalone MCP**(`ableops-kafka-mcp`) 배포만 다룹니다. AbleOps Kafka Core 가 직접 기동하는 **Managed Extension**(`ableops-kafka-mcp-extension`)은 배포 단위가 `dist/` 폴더가 아니라 `.ableops-ext` 설치 패키지이고, `ABLEOPS_BASE_URL`·MCP 토큰·Web Delegation 공유 비밀을 따로 설정하지 않습니다. 패키지 빌드와 서명 정책은 [README 의 Managed Extension 패키지 빌드](../README.md#managed-extension-패키지-빌드)를 보세요.
+
 ## 로컬 HTTP 인증 등록과 실행
 
 이 모드는 OAuth가 아닌 개발용 사용자 매핑이다. 수신은 loopback IP만 허용하며 공용 서비스 인증 완료를 의미하지 않는다. 임의 Authorization Bearer 설정이 가능한 MCP 클라이언트를 사용한다. stdio 실행은 아래 기존 안내를 그대로 따른다.

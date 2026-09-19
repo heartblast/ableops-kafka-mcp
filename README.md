@@ -66,6 +66,60 @@ dist/
 
 각 폴더가 배포 단위이며, 대상 OS와 아키텍처에 맞는 폴더를 복사하여 사용합니다. `README.md`는 [배포 및 실행 안내](docs/deployment.md)의 사본이고, `SHA256SUMS`는 실행파일의 SHA-256 체크섬입니다. 압축 파일 생성이나 원격 서버 전송은 수행하지 않습니다. 빌드 스크립트와 테스트는 별도 명령이므로 배포본을 전달하기 전에 위 검증 명령도 실행하세요.
 
+## 두 가지 실행 방식
+
+같은 도구 집합을 두 가지 방식으로 제공합니다. 바이너리가 다르고 설정 요구도 다릅니다. 용도를 섞지 마세요.
+
+| | Standalone MCP | AbleOps Managed Extension |
+| --- | --- | --- |
+| 바이너리 | `ableops-kafka-mcp` | `ableops-kafka-mcp-extension` |
+| 배포 단위 | `dist/<os>-<arch>/` 폴더 | `ableops-kafka-mcp_0.6.0.ableops-ext` 패키지 |
+| 대상 | Claude Desktop·Codex 등 외부 MCP Client | AbleOps Kafka Core |
+| 전송 | stdio(기본) 또는 loopback Streamable HTTP | Core 가 기동하는 random loopback listener |
+| 프로세스 관리 | 사용자·MCP Client | Core 가 lifecycle 관리 |
+| 설정 | `.env` / `mcp-server-config.yaml`, `ABLEOPS_BASE_URL`, MCP 토큰 | 불필요 — Core 기동 핸드셰이크로 전달 |
+| Web Delegation 공유 비밀 | 별도 설정 필요 | 불필요(기동 시 프로세스 메모리에만 생성) |
+
+Managed Extension 의 `/mcp`·`/internal/delegations` 는 **Core 내부 전용**입니다. Manifest 가 공개 route 를 선언하지 않으므로 Core 의 `/api/extensions/<id>` 프록시로는 닿지 않습니다.
+
+## Managed Extension 패키지 빌드
+
+`.ableops-ext` 패키지는 AbleOps Kafka 관리 화면의 [확장 기능 관리] → [설치] 에서 업로드하는 설치 파일입니다.
+
+```bash
+bash ./scripts/build-extension.sh
+```
+
+```powershell
+.\scripts\build-extension.ps1
+```
+
+두 스크립트는 같은 구조의 패키지를 만들고, 만든 직후 스스로 검증합니다(ZIP 형식·최상위 항목 규칙·Manifest 일치·바이너리 존재·Standalone 바이너리와 민감 파일 미포함). 결과는 다음과 같습니다.
+
+```text
+dist/extensions/ableops-kafka-mcp_0.6.0.ableops-ext
+  manifest.yaml
+  bin/linux-amd64/ableops-kafka-mcp-extension
+  bin/windows-amd64/ableops-kafka-mcp-extension.exe
+```
+
+- 패키지의 `id`·`version`(그리고 파일 이름)은 [`internal/extension/manifest.yaml`](internal/extension/manifest.yaml) 하나에서만 옵니다. 버전을 올리려면 Manifest 를 고치세요 — 스크립트에는 버전 override 옵션이 없습니다. Manifest 는 바이너리에 `go:embed` 되므로 파일 이름만 바꾸면 설치본과 어긋납니다.
+- 검증한 기본 플랫폼은 `linux/amd64` 와 `windows/amd64` 입니다. `--targets`(bash) / `-Targets`(PowerShell) 로 다른 `os/arch` 를 넣을 수 있지만, 이 저장소에서 빌드를 확인한 대상은 위 둘뿐입니다.
+- Standalone 바이너리(`ableops-kafka-mcp`)는 패키지에 포함하지 않습니다. 스크립트가 포함 여부를 검사해 실패시킵니다.
+- 이 패키지 빌드는 AbleOps Kafka Core 저장소를 checkout 하거나 Core 패키지를 import 하지 않습니다. 이 저장소 하나만 있으면 만들 수 있습니다.
+
+### 서명
+
+현재 산출물은 **미서명** 패키지입니다. Core 의 `extensions.signatureMode` 설정에 따라 설치 가능 여부가 달라집니다.
+
+```text
+signatureMode=off      → unsigned 설치 가능
+signatureMode=warn     → unsigned 설치 가능 + 경고 (Core 기본값)
+signatureMode=require  → 서명된 package 필요
+```
+
+`require` 환경에 배포할 때는 AbleOps 공식 signing tool 로 서명합니다. 서명 포맷(Ed25519 · `META-INF/ableops-signature.json`)은 Core 검증기와 한 글자라도 어긋나면 통과하지 못하므로 이 저장소에서 독자 구현하지 않습니다.
+
 ## 설정과 실행
 
 서버는 `--config`로 지정한 YAML과 기존 환경변수를 지원합니다. **YAML과 `.env`를 자동으로 읽지 않습니다.** `--config`를 생략하면 기존 환경변수·플래그 방식으로 실행합니다. `.env.example`은 비밀값 없는 참고 파일입니다.
