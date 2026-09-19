@@ -31,6 +31,13 @@
 #   경고와 함께 설치된다(off 도 설치 가능). require 환경에는 AbleOps 공식 signing tool 로 서명한
 #   패키지가 필요하다 — 서명 포맷을 이 저장소에서 독자 구현하지 않는다.
 # =============================================================================
+# `sh scripts/build-extension.sh` 처럼 셔뱅을 무시하고 실행하면 dash 가 이 스크립트를 읽어
+# `set -o pipefail`·배열·[[ ]] 에서 깨진다. 호출 방식을 탓하는 대신 bash 로 다시 실행한다
+# (여기까지는 POSIX 문법만 쓰므로 dash 도 문제없이 읽는다).
+if [ -z "${BASH_VERSION:-}" ]; then
+    exec bash "$0" "$@"
+fi
+
 set -euo pipefail
 
 TARGETS="linux/amd64,windows/amd64"

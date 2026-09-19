@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
+# `sh scripts/build.sh` 처럼 셔뱅을 무시하고 실행하면 dash 가 이 스크립트를 읽어
+# `set -o pipefail`·배열·[[ ]] 에서 깨진다. 호출 방식을 탓하는 대신 bash 로 다시 실행한다
+# (여기까지는 POSIX 문법만 쓰므로 dash 도 문제없이 읽는다).
+if [ -z "${BASH_VERSION:-}" ]; then
+    exec bash "$0" "$@"
+fi
+
 set -euo pipefail
 
 usage() {
