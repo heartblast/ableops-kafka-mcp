@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/heartblast/ableops-kafka-mcp/internal/mcpserver"
 	extv1 "github.com/heartblast/ableops-sdk/extension/v1"
 	"github.com/heartblast/ableops-sdk/extension/v1/testkit"
 )
@@ -40,6 +41,21 @@ func TestManifestSatisfiesContract(t *testing.T) {
 	again := New().Manifest()
 	if again.ID != manifest.ID || again.Version != manifest.Version {
 		t.Fatal("Manifest 가 호출마다 달라집니다")
+	}
+}
+
+// Manifest 의 version 은 MCP 서버가 클라이언트에 알리는 구현 버전과 같아야 한다.
+//
+// 둘은 같은 프로그램의 버전이다. 한쪽만 올리면 관리 화면의 설치 버전과 MCP 클라이언트가 보는
+// 서버 버전이 갈리고, 어느 쪽도 틀렸다고 알려주지 않는다(실제로 0.2.0 이 그대로 남아 있었다).
+func TestManifestVersionMatchesServerVersion(t *testing.T) {
+	manifest, err := LoadManifest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Version != mcpserver.Version {
+		t.Fatalf("manifest.yaml version = %q, mcpserver.Version = %q — 같이 올려야 합니다",
+			manifest.Version, mcpserver.Version)
 	}
 }
 
