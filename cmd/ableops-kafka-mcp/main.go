@@ -11,15 +11,9 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/heartblast/ableops-kafka-mcp/internal/ableops"
+	"github.com/heartblast/ableops-kafka-mcp/internal/app"
 	"github.com/heartblast/ableops-kafka-mcp/internal/config"
-	"github.com/heartblast/ableops-kafka-mcp/internal/dynamic"
-	"github.com/heartblast/ableops-kafka-mcp/internal/localauth"
 	"github.com/heartblast/ableops-kafka-mcp/internal/mcpserver"
-	"github.com/heartblast/ableops-kafka-mcp/internal/openapi"
-	"github.com/heartblast/ableops-kafka-mcp/internal/requestctx"
-	"github.com/heartblast/ableops-kafka-mcp/internal/tools"
-	"github.com/heartblast/ableops-kafka-mcp/internal/webdelegation"
 )
 
 func main() {
@@ -78,79 +72,40 @@ func run() int {
 		startup.Error("설정 검증 실패", "error", err.Error())
 		return 1
 	}
-	cfg := runtimeConfig.Backend
-	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: cfg.LogLevel}))
-	client, err := ableops.NewClient(cfg)
+	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: runtimeConfig.Backend.LogLevel}))
+	// MCP Runtime 조립은 internal/app 이 담당한다. 여기서는 전송 선택·signal·exit code만 남긴다.
+	runtime, err := app.New(runtimeConfig, logger)
 	if err != nil {
-		logger.Error("REST 클라이언트 초기화 실패", "error", err.Error())
+		var failure *app.Error
+		if errors.As(err, &failure) {
+			if failure.Detail != "" {
+				logger.Error(failure.Message, "error", failure.Detail)
+			} else {
+				logger.Error(failure.Message, "code", failure.Code)
+			}
+		} else {
+			// app 은 항상 *app.Error 를 돌려주므로 여기에는 오지 않는다. 와도 원문은 남기지 않는다.
+			logger.Error("MCP Runtime 초기화 실패", "code", "startup_error")
+		}
 		return 1
 	}
-	defer client.CloseIdleConnections()
+	defer runtime.Close()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	var options []mcpserver.Option
-	var runtime *dynamic.Runtime
-	if runtimeConfig.Dynamic.Enabled {
-		runtime = newDynamicRuntime(client, runtimeConfig.Dynamic, logger)
-		options = append(options, mcpserver.WithRuntime(runtime))
-	}
-	server := mcpserver.New(client, logger, options...)
-	if runtime != nil {
-		// 최초 적재는 전송을 시작하기 전에 끝내 첫 tools/list에 반영한다. 실패해도 Static 도구로 기동한다.
-		runtime.Refresh(ctx)
-		refreshCtx, stopRefresh := context.WithCancel(ctx)
-		refreshDone := make(chan struct{})
-		go func() {
-			defer close(refreshDone)
-			runtime.Run(refreshCtx, runtimeConfig.Dynamic.RefreshInterval)
-		}()
-		defer func() {
-			stopRefresh()
-			<-refreshDone
-		}()
-		logger.Info("동적 도구 계약 주기 갱신 시작", "interval", runtimeConfig.Dynamic.RefreshInterval.String())
-	}
+	runtime.Start(ctx)
 	if runtimeConfig.Transport == "http" {
-		store, storeErr := localauth.NewStore(runtimeConfig.AuthStore, verifyBackend(client))
-		if storeErr != nil {
-			logger.Error("로컬 인증 저장소 초기화 실패", "code", "auth_configuration_error")
-			return 1
-		}
-		options := mcpserver.HTTPOptions{Address: runtimeConfig.HTTPAddress, AllowedOrigins: runtimeConfig.AllowedOrigins, Authenticate: store.Authenticate, Logger: logger}
-		if runtimeConfig.WebDelegation.Enabled {
-			delegations, delegationErr := webdelegation.NewStore(verifyBackend(client), runtimeConfig.WebDelegation.TTL)
-			if delegationErr != nil {
-				logger.Error("Web 위임 저장소 초기화 실패", "code", "delegation_configuration_error")
-				return 1
-			}
-			// 인증 Provider 는 **교체가 아니라 추가**다. 위임 토큰 접두사만 새 저장소로 보내고
-			// 나머지(Claude Desktop·Codex 등 기존 local 토큰)는 그대로 localauth 로 간다.
-			options.Authenticate = func(ctx context.Context, token string) (requestctx.Principal, error) {
-				if webdelegation.ValidToken(token) {
-					return delegations.Authenticate(ctx, token)
-				}
-				return store.Authenticate(ctx, token)
-			}
-			options.InternalSecret = runtimeConfig.WebDelegation.Secret
-			options.IssueDelegation = func(ctx context.Context, backendToken string) (mcpserver.DelegationGrant, error) {
-				grant, err := delegations.Issue(ctx, backendToken)
-				return mcpserver.DelegationGrant{Token: grant.Token, UserID: grant.UserID, ExpiresAt: grant.ExpiresAt}, err
-			}
-			// TTL 만 남긴다 — 비밀·토큰은 어떤 수준에서도 로그에 넣지 않는다.
-			logger.Info("Web 세션 위임 발급 활성", "ttl", runtimeConfig.WebDelegation.TTL.String())
-		}
 		logger.Info("MCP 로컬 HTTP 서버 시작", "version", "0.1.0")
-		err = mcpserver.RunHTTP(ctx, server, options)
+		err = mcpserver.RunHTTP(ctx, runtime.Server(), runtime.HTTPOptions())
 	} else {
 		logger.Info("MCP stdio 서버 시작", "version", "0.1.0")
-		err = mcpserver.RunStdio(ctx, server)
+		err = mcpserver.RunStdio(ctx, runtime.Server())
 	}
 	if err != nil && !errors.Is(err, context.Canceled) {
 		// 기동 단계 오류는 이 리포지토리가 만든 고정 문구라 외부 입력을 담지 않는다.
 		// 원인을 감추면 운영자는 조치할 수 없는 protocol_error 만 보게 되므로 그대로 남긴다.
-		var startup *mcpserver.StartupError
-		if errors.As(err, &startup) {
-			logger.Error("MCP 서버 기동 실패", "code", "startup_error", "reason", startup.Error())
+		var startupErr *mcpserver.StartupError
+		if errors.As(err, &startupErr) {
+			logger.Error("MCP 서버 기동 실패", "code", "startup_error", "reason", startupErr.Error())
 			return 1
 		}
 		// SDK 오류에 원본 입력이 포함될 수 있어 원문은 로그에 남기지 않는다.
@@ -159,24 +114,4 @@ func run() int {
 	}
 	logger.Info("MCP 서버 종료")
 	return 0
-}
-
-// verifyBackend는 기존 REST Client 로 Backend 세션을 확인하는 검사기를 만든다.
-// localauth 와 webdelegation 이 **같은 검사기**를 쓴다 — 세션 유효성 판정이 두 벌이 되면
-// 한쪽에서만 로그아웃이 반영되는 상태가 생긴다.
-func verifyBackend(client *ableops.Client) func(context.Context, string) (string, error) {
-	return func(ctx context.Context, token string) (string, error) {
-		p, _ := requestctx.FromContext(ctx)
-		p.BackendToken = token
-		return client.CurrentUserID(requestctx.WithPrincipal(ctx, p))
-	}
-}
-
-// newDynamicRuntime은 계약 조회기와 Registry 구성을 묶은 런타임을 만든다. 계약은 아직 조회하지 않는다.
-// 설정이 꺼져 있으면 호출하지 않으므로 /openapi.json 조회도, 주기 갱신도 없다.
-func newDynamicRuntime(client *ableops.Client, cfg config.DynamicConfig, logger *slog.Logger) *dynamic.Runtime {
-	return dynamic.NewRuntime(client, logger, openapi.NewLoader(client), dynamic.Options{
-		StaticToolNames: tools.StaticNames(),
-		Operations:      cfg.Operations,
-	})
 }
