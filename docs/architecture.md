@@ -82,7 +82,7 @@ stdout에는 JSON-RPC만 기록한다. stderr JSON 로그에는 도구명, 클�
 
 ## 로컬 HTTP와 사용자 위임
 
-공식 SDK v1.8.0의 `NewStreamableHTTPHandler`를 stateless로 사용한다. 초기화·버전 협상과 MCP 처리는 SDK가 담당하며 기존 도구 등록을 재사용한다. 인증용 세션 ID를 발급하지 않아 다른 사용자의 MCP 세션을 재사용하는 경로도 없다. HTTP 인증, Origin/Host, 크기·동시 호출·시간 제한과 종료 수명은 `internal/mcpserver/http.go`가 담당한다.
+공식 SDK v1.8.0의 `NewStreamableHTTPHandler`를 stateless로 사용한다. 초기화·버전 협상과 MCP 처리는 SDK가 담당하며 기존 도구 등록을 재사용한다. 인증용 세션 ID를 발급하지 않아 다른 사용자의 MCP 세션을 재사용하는 경로도 없다. HTTP 인증, Origin/Host, 크기·동시 호출·시간 제한과 종료 수명은 `internal/mcpserver/http.go`가 담당한다. 동시성과 별도로 요청 **빈도** 제한을 둔다(`internal/mcpserver/ratelimit.go`) — 인증 실패는 피어 IP별로, 인증에 성공한 요청은 사용자 ID별로 세며 상태 키 수에 상한이 있다. 프록시 경유 노출 방어(`internal/mcpserver/proxy_guard.go`)는 프록시 헤더가 붙은 요청과 loopback이 아닌 피어를 경로 분기 이전에 거부한다.
 
 `internal/localauth`는 로컬 관리자 파일의 MCP 토큰 해시·audience·만료·폐기를 매 요청 확인한다. Backend용 opaque 세션은 별도 저장하며 `/api/me`로 매 요청 현재 사용자 매핑을 재검증한다. 사용자 ID나 `X-User`를 신뢰하지 않는다. Backend 클러스터 권한은 실제 조회 요청에서 최종 적용한다. 파일과 사용자/권한 결과를 장기 캐시하지 않는다. 갱신·폐기는 다음 요청부터 적용되며 이미 진행 중인 요청을 소급 취소하지 않는다.
 

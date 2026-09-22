@@ -54,6 +54,16 @@ type HTTPOptions struct {
 	WriteIdleTimeout     time.Duration
 	ShutdownTimeout      time.Duration
 	MaxHeaderBytes       int
+	// RateLimitWindow는 아래 두 빈도 제한이 회복되는 기준 시간이다.
+	RateLimitWindow time.Duration
+	// MaxRequestsPerUserPerWindow는 인증에 성공한 Principal 하나가 창당 보낼 수 있는 요청 수다.
+	// 동시성 제한(MaxConcurrentPerUser)과 달리 순차 반복 호출을 막는다.
+	MaxRequestsPerUserPerWindow int
+	// MaxAuthFailuresPerPeerPerWindow는 피어 IP 하나가 창당 낼 수 있는 인증 실패 수다.
+	// `/mcp` Bearer 실패와 `/internal/` 공유 비밀 실패를 함께 센다(둘 다 자격증명 대입이다).
+	MaxAuthFailuresPerPeerPerWindow int
+	// MaxRateLimitEntries는 빈도 제한 상태의 키 상한이다. 곧 메모리 상한이다.
+	MaxRateLimitEntries int
 }
 
 func (o HTTPOptions) normalized() (HTTPOptions, error) {
@@ -77,7 +87,7 @@ func (o HTTPOptions) normalized() (HTTPOptions, error) {
 	if o.InternalSecret != "" && len(o.InternalSecret) < minInternalSecretBytes {
 		return o, startupError("서버간 공유 비밀은 32바이트 이상이어야 합니다")
 	}
-	if o.MaxRequestBytes < 0 || o.MaxConcurrent < 0 || o.MaxConcurrentPerUser < 0 || o.RequestTimeout < 0 || o.ReadHeaderTimeout < 0 || o.ReadTimeout < 0 || o.IdleTimeout < 0 || o.WriteIdleTimeout < 0 || o.ShutdownTimeout < 0 || o.MaxHeaderBytes < 0 {
+	if o.MaxRequestBytes < 0 || o.MaxConcurrent < 0 || o.MaxConcurrentPerUser < 0 || o.RequestTimeout < 0 || o.ReadHeaderTimeout < 0 || o.ReadTimeout < 0 || o.IdleTimeout < 0 || o.WriteIdleTimeout < 0 || o.ShutdownTimeout < 0 || o.MaxHeaderBytes < 0 || o.RateLimitWindow < 0 || o.MaxRequestsPerUserPerWindow < 0 || o.MaxAuthFailuresPerPeerPerWindow < 0 || o.MaxRateLimitEntries < 0 {
 		return o, startupError("HTTP 제한은 양수여야 합니다")
 	}
 	if o.MaxRequestBytes == 0 {
@@ -110,6 +120,19 @@ func (o HTTPOptions) normalized() (HTTPOptions, error) {
 	if o.MaxHeaderBytes == 0 {
 		o.MaxHeaderBytes = 16 << 10
 	}
+	if o.RateLimitWindow == 0 {
+		o.RateLimitWindow = time.Minute
+	}
+	// 기본값은 사람이 붙은 MCP 클라이언트의 실사용보다 넉넉하고, 자동화된 반복 시도보다는 훨씬 낮다.
+	if o.MaxRequestsPerUserPerWindow == 0 {
+		o.MaxRequestsPerUserPerWindow = 240
+	}
+	if o.MaxAuthFailuresPerPeerPerWindow == 0 {
+		o.MaxAuthFailuresPerPeerPerWindow = 20
+	}
+	if o.MaxRateLimitEntries == 0 {
+		o.MaxRateLimitEntries = defaultRateLimitEntries
+	}
 	if o.Logger == nil {
 		o.Logger = slog.New(slog.DiscardHandler)
 	}
@@ -121,6 +144,40 @@ func (o HTTPOptions) normalized() (HTTPOptions, error) {
 	}
 	return o, nil
 }
+
+// securityFailureCodes는 감사 로그를 경고 수준으로 올릴 실패 코드다.
+//
+// 여기 있는 코드는 설정 오류나 일시적 장애가 아니라 **경계를 두드린 흔적**이거나 운영자가 즉시
+// 알아야 하는 포화다. 전부 Info 로 남기면 정상 요청 수만 건에 섞여 반복 시도를 알아볼 수 없다.
+//
+// ⚠ 흔히 발생하는 실패는 넣지 않는다. authentication_required(만료된 토큰)·timeout·
+// method_not_allowed 처럼 정상 운영에서도 나오는 코드를 올리면 경고가 무의미해진다.
+var securityFailureCodes = map[string]bool{
+	// 서버간 공유 비밀 불일치 — 비밀 대입 시도다.
+	"internal_authentication_required": true,
+	// 브라우저 컨텍스트에서 서버간 경로를 불렀다 — 정상 호출자는 낼 수 없는 형태다.
+	"browser_request_denied": true,
+	// 요청 본문에 자격증명이 실려 왔다 — 클라이언트 결함이거나 토큰 반사 시도다.
+	"credential_in_payload": true,
+	// Host 가 loopback 이 아니다 — DNS rebinding 시도다.
+	"invalid_host": true,
+	// 허용하지 않은 Origin — CORS 우회 시도다.
+	"origin_denied":    true,
+	"preflight_denied": true,
+	// 위임 발급 한도 도달 — 전역이든 사용자별이든 포화는 운영자가 알아야 한다.
+	"delegation_limit": true,
+	// 프록시 경유 흔적이 있는 요청 — loopback 전용 서버가 외부로 노출됐다는 신호다.
+	"proxy_request_denied": true,
+	// loopback 이 아닌 피어에서 온 연결 — 수신 정책이 무너졌거나 전달된 요청이다.
+	"peer_denied": true,
+	// 인증 실패 반복으로 피어가 차단됐다 — 자격증명 대입 시도다.
+	"auth_rate_limit": true,
+}
+
+// defaultRateLimitEntries는 빈도 제한 상태의 기본 키 상한이다.
+// 4096개 × 수십 바이트면 메모리는 무시할 수준이고, loopback 한 대에서 나올 수 있는
+// 서로 다른 사용자·피어 수보다 충분히 크다.
+const defaultRateLimitEntries = 4096
 
 type httpRequestContextKey struct{}
 
@@ -168,6 +225,10 @@ func NewHTTPHandler(server *mcp.Server, opts HTTPOptions) (http.Handler, error) 
 		Logger: slog.New(slog.DiscardHandler),
 	})
 	global := make(chan struct{}, opts.MaxConcurrent)
+	// 두 제한기는 키 공간이 다르므로 분리한다 — 한 사용자의 과다 호출이 다른 피어의 실패
+	// 예산을 깎으면 안 되고, 반대도 마찬가지다.
+	authFailures := newRateLimiter(opts.MaxAuthFailuresPerPeerPerWindow, opts.RateLimitWindow, opts.MaxRateLimitEntries)
+	userRequests := newRateLimiter(opts.MaxRequestsPerUserPerWindow, opts.RateLimitWindow, opts.MaxRateLimitEntries)
 	var usersMu sync.Mutex
 	users := make(map[string]int)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -181,11 +242,34 @@ func NewHTTPHandler(server *mcp.Server, opts HTTPOptions) (http.Handler, error) 
 		code := "ok"
 		var userID, clientID string
 		defer func() {
-			opts.Logger.Info("HTTP 요청 완료", "request_id", requestID, "user_id", userID, "client_id", clientID, "code", code, "http_status", safe.statusCode(), "duration_ms", time.Since(started).Milliseconds())
+			// 메시지는 한 가지로 유지한다 — 운영자가 코드별로 집계할 때 질의가 갈라지면 안 된다.
+			// 구분은 수준(level)과 code 필드가 한다.
+			write := opts.Logger.Info
+			if securityFailureCodes[code] {
+				write = opts.Logger.Warn
+			}
+			write("HTTP 요청 완료", "request_id", requestID, "user_id", userID, "client_id", clientID, "code", code, "http_status", safe.statusCode(), "duration_ms", time.Since(started).Milliseconds())
 		}()
 		fail := func(status int, failure string) { code = failure; http.Error(w, failure, status) }
 		if !loopbackHost(r.Host) {
 			fail(http.StatusForbidden, "invalid_host")
+			return
+		}
+		// 프록시 경유 방어는 경로 분기보다 **먼저** 한다. `/internal/` 도 예외가 아니다 —
+		// 서버간 경로가 프록시 뒤에 놓이는 순간 공유 비밀만 알면 외부에서 위임을 받아 갈 수 있다.
+		if forwardedRequest(r.Header) {
+			fail(http.StatusForbidden, "proxy_request_denied")
+			return
+		}
+		if !loopbackPeer(r.RemoteAddr) {
+			fail(http.StatusForbidden, "peer_denied")
+			return
+		}
+		peer := peerKey(r.RemoteAddr)
+		// 이미 실패 예산을 소진한 피어는 인증 검사 자체를 시키지 않는다.
+		if !authFailures.permitted(peer) {
+			w.Header().Set("Retry-After", "1")
+			fail(http.StatusTooManyRequests, "auth_rate_limit")
 			return
 		}
 		// 서버간 전용 경로는 CORS 허용 블록보다 **먼저** 갈라낸다. 허용 Origin 인 Web UI 라도
@@ -200,6 +284,9 @@ func NewHTTPHandler(server *mcp.Server, opts HTTPOptions) (http.Handler, error) 
 				return
 			}
 			userID, clientID = serveInternalDelegation(w, r, opts, fail), "internal-delegation"
+			if code == "internal_authentication_required" {
+				authFailures.penalize(peer)
+			}
 			return
 		}
 		origin := r.Header.Get("Origin")
@@ -255,6 +342,7 @@ func NewHTTPHandler(server *mcp.Server, opts HTTPOptions) (http.Handler, error) 
 		if !ok {
 			w.Header().Set("WWW-Authenticate", "Bearer")
 			fail(http.StatusUnauthorized, "authentication_required")
+			authFailures.penalize(peer)
 			return
 		}
 		ctx = requestctx.WithPrincipal(ctx, requestctx.Principal{RequestID: requestID})
@@ -265,10 +353,16 @@ func NewHTTPHandler(server *mcp.Server, opts HTTPOptions) (http.Handler, error) 
 				w.Header().Set("WWW-Authenticate", "Bearer")
 			}
 			fail(status, authCode)
+			// 자격증명이 틀린 경우만 센다. 백엔드 장애·타임아웃까지 세면 장애 중에 정상
+			// 클라이언트가 차단되고, 그때가 하필 운영자가 접속해야 하는 순간이다.
+			if status == http.StatusUnauthorized || status == http.StatusForbidden {
+				authFailures.penalize(peer)
+			}
 			return
 		}
 		if principal.UserID == "" || principal.BackendToken == "" || principal.BackendToken == token {
 			fail(http.StatusUnauthorized, "authentication_required")
+			authFailures.penalize(peer)
 			return
 		}
 		principal.MCPToken, principal.RequestID = token, requestID
@@ -278,6 +372,12 @@ func NewHTTPHandler(server *mcp.Server, opts HTTPOptions) (http.Handler, error) 
 			clientID = strings.ReplaceAll(clientID, credential, "[REDACTED]")
 		}
 		userKey := principal.UserID
+		// 빈도 제한은 동시성 제한과 별도로 본다. 동시성은 "지금 몇 개"를, 여기는 "얼마나 자주"를 막는다.
+		if !userRequests.allow(userKey) {
+			w.Header().Set("Retry-After", "1")
+			fail(http.StatusTooManyRequests, "user_rate_limit")
+			return
+		}
 		usersMu.Lock()
 		if users[userKey] >= opts.MaxConcurrentPerUser {
 			usersMu.Unlock()

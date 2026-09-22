@@ -169,6 +169,8 @@ func TestNewWithOptionsZeroMatchesNew(t *testing.T) {
 
 func request(method, path, body string, headers map[string]string) *http.Request {
 	r := httptest.NewRequest(method, "http://127.0.0.1:8081"+path, strings.NewReader(body))
+	// loopback 피어로 맞춘다(httptest 기본값은 외부 대역이라 프록시 경유 방어에 걸린다).
+	r.RemoteAddr = "127.0.0.1:54321"
 	for k, v := range headers {
 		r.Header.Set(k, v)
 	}
