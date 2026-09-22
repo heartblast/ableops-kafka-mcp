@@ -1,1 +1,6 @@
 *.sh text eol=lf
+
+# PowerShell: Windows PowerShell 5.1 은 BOM 없는 .ps1 을 시스템 ANSI 코드페이지(예: cp949)로
+# 읽어 한글 주석·문자열이 깨진다. BOM 바이트를 내용 그대로 보존해야 하므로 인코딩 변환을
+# 걸지 않고 줄바꿈만 CRLF 로 고정한다. BOM 유무는 CI 에서 검사한다.
+*.ps1 text eol=crlf

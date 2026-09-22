@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [ValidateSet('all', 'linux', 'windows')]
     [string]$TargetOS = 'all',
