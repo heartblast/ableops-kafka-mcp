@@ -122,6 +122,29 @@ func (o HTTPOptions) normalized() (HTTPOptions, error) {
 	return o, nil
 }
 
+// securityFailureCodes는 감사 로그를 경고 수준으로 올릴 실패 코드다.
+//
+// 여기 있는 코드는 설정 오류나 일시적 장애가 아니라 **경계를 두드린 흔적**이거나 운영자가 즉시
+// 알아야 하는 포화다. 전부 Info 로 남기면 정상 요청 수만 건에 섞여 반복 시도를 알아볼 수 없다.
+//
+// ⚠ 흔히 발생하는 실패는 넣지 않는다. authentication_required(만료된 토큰)·timeout·
+// method_not_allowed 처럼 정상 운영에서도 나오는 코드를 올리면 경고가 무의미해진다.
+var securityFailureCodes = map[string]bool{
+	// 서버간 공유 비밀 불일치 — 비밀 대입 시도다.
+	"internal_authentication_required": true,
+	// 브라우저 컨텍스트에서 서버간 경로를 불렀다 — 정상 호출자는 낼 수 없는 형태다.
+	"browser_request_denied": true,
+	// 요청 본문에 자격증명이 실려 왔다 — 클라이언트 결함이거나 토큰 반사 시도다.
+	"credential_in_payload": true,
+	// Host 가 loopback 이 아니다 — DNS rebinding 시도다.
+	"invalid_host": true,
+	// 허용하지 않은 Origin — CORS 우회 시도다.
+	"origin_denied":    true,
+	"preflight_denied": true,
+	// 위임 발급 한도 도달 — 전역이든 사용자별이든 포화는 운영자가 알아야 한다.
+	"delegation_limit": true,
+}
+
 type httpRequestContextKey struct{}
 
 // NewHTTPHandler는 SDK의 무상태 전송에 요청별 인증과 제한을 적용한다.
@@ -181,7 +204,13 @@ func NewHTTPHandler(server *mcp.Server, opts HTTPOptions) (http.Handler, error) 
 		code := "ok"
 		var userID, clientID string
 		defer func() {
-			opts.Logger.Info("HTTP 요청 완료", "request_id", requestID, "user_id", userID, "client_id", clientID, "code", code, "http_status", safe.statusCode(), "duration_ms", time.Since(started).Milliseconds())
+			// 메시지는 한 가지로 유지한다 — 운영자가 코드별로 집계할 때 질의가 갈라지면 안 된다.
+			// 구분은 수준(level)과 code 필드가 한다.
+			write := opts.Logger.Info
+			if securityFailureCodes[code] {
+				write = opts.Logger.Warn
+			}
+			write("HTTP 요청 완료", "request_id", requestID, "user_id", userID, "client_id", clientID, "code", code, "http_status", safe.statusCode(), "duration_ms", time.Since(started).Milliseconds())
 		}()
 		fail := func(status int, failure string) { code = failure; http.Error(w, failure, status) }
 		if !loopbackHost(r.Host) {

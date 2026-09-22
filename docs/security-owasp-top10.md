@@ -16,7 +16,7 @@
 | Critical | 0 | — |
 | High | 0 | — |
 | Medium | 0 | — |
-| Low | 3 | [L-1](#l-1-golangorgxsys-v0410-의-알려진-취약점-a06) `golang.org/x/sys` 알려진 취약점<br>[L-2](#l-2-localauth-가-backend-세션-토큰을-평문으로-디스크에-보관한다-a02) Backend 토큰 평문 디스크 보관<br>[L-3](#l-3-위임-발급-한도가-사용자별로-나뉘지-않았다-a04--조치-완료) 위임 발급 한도 사용자별 미분배 — **조치 완료** |
+| Low | 3 | [L-1](#l-1-golangorgxsys-v0410-의-알려진-취약점-a06--조치-완료) `golang.org/x/sys` 알려진 취약점<br>[L-2](#l-2-localauth-가-backend-세션-토큰을-평문으로-디스크에-보관한다-a02) Backend 토큰 평문 디스크 보관<br>[L-3](#l-3-위임-발급-한도가-사용자별로-나뉘지-않았다-a04--조치-완료) 위임 발급 한도 사용자별 미분배 — **조치 완료** |
 | Info | 4 | 아래 [5장](#5-정보성-관찰) 참조 |
 
 > **판정 이력**: L-3은 초안에서 Medium(M-1)으로 기재했으나 재검증 후 Low로 하향했다. 근거는 [심각도 재평가](#심각도-재평가-medium--low)에 남긴다.
@@ -25,12 +25,12 @@
 
 ### 검증 실행 결과
 
-```
-go build ./...     통과
-go vet ./...       통과
-go test ./...      전체 15개 패키지 통과
-govulncheck ./...  호출 가능한 취약점 0건 (import 경로 1건 — L-1)
-```
+| 명령 | 점검 시점 | 조치 후 |
+| --- | --- | --- |
+| `go build ./...` | 통과 | 통과 |
+| `go vet ./...` | 통과 | 통과 |
+| `go test ./...` | 15개 패키지 통과 | 15개 패키지 통과 (신규 테스트 9종 포함) |
+| `govulncheck ./...` | 호출 가능 0건 / import 경로 **1건** | **0건** |
 
 ---
 
@@ -273,9 +273,9 @@ TTL을 최대값으로 둔 배포에서도 단일 행위자의 공격 비용이 
 
 ---
 
-### A06 — Vulnerable and Outdated Components :warning: Low 1건
+### A06 — Vulnerable and Outdated Components :warning: Low 1건 (조치 완료)
 
-#### L-1. `golang.org/x/sys` v0.41.0 의 알려진 취약점 (A06)
+#### L-1. `golang.org/x/sys` v0.41.0 의 알려진 취약점 (A06) — 조치 완료
 
 **`govulncheck` 결과**
 
@@ -292,20 +292,29 @@ Vulnerability #1: GO-2026-5024
 
 다만 **주 개발·배포 플랫폼이 Windows**이고(`private_windows.go`가 인증 저장소 권한 검사의 핵심 경로), 향후 SDK 갱신이나 코드 변경으로 호출 경로가 생길 수 있으므로 갱신을 권한다.
 
-**권고**
+##### 적용한 조치
+
+`golang.org/x/sys`를 **v0.41.0 → v0.48.0**(최신)으로 갱신했다. v0.44.0이 최소 요건이지만 최신으로 올려 후속 갱신 부담을 줄였다.
 
 ```bash
-go get golang.org/x/sys@v0.44.0   # 또는 최신 v0.48.0
+go get golang.org/x/sys@v0.48.0
 go mod tidy
-go test ./...
-govulncheck ./...
 ```
+
+갱신 후 `govulncheck ./...`는 **취약점 0건**이다. 조치 전에는 import 경로에 1건이 남아 있었다(호출 경로는 없었다).
+
+```
+조치 전: This scan also found 1 vulnerability in packages you import
+조치 후: No vulnerabilities found.
+```
+
+재발을 막기 위해 CI에 상시 점검을 추가했다 — [I-1](#5-정보성-관찰) 참조.
 
 #### 그 밖의 의존성 현황
 
 | 모듈 | 현재 | 최신 | 비고 |
 | --- | --- | --- | --- |
-| `golang.org/x/sys` | v0.41.0 | v0.48.0 | **L-1 — 갱신 필요** |
+| `golang.org/x/sys` | **v0.48.0** | v0.48.0 | L-1 조치로 갱신 완료 |
 | `golang.org/x/oauth2` | v0.35.0 | v0.37.0 | 간접, 알려진 취약점 없음 |
 | `golang.org/x/sync` | v0.20.0 | v0.23.0 | 간접 |
 | `golang.org/x/time` | v0.15.0 | v0.16.0 | 간접 |
@@ -355,7 +364,7 @@ govulncheck ./...
 
 ---
 
-### A09 — Security Logging and Monitoring Failures :white_check_mark: 양호
+### A09 — Security Logging and Monitoring Failures :white_check_mark: 양호 (로깅 수준 개선 적용)
 
 | 점검 항목 | 결과 | 근거 |
 | --- | --- | --- |
@@ -368,7 +377,20 @@ govulncheck ./...
 | 기동 실패 진단 | 가능 | 고정 문구 `StartupError`로 원인을 분류해 `protocol_error` 뒤에 감추지 않음 ([http.go:26-33](../internal/mcpserver/http.go#L26-L33)) |
 | 오류 반사 | 차단 | `safeHTTPWriter`가 4xx/5xx 본문을 `http.StatusText`로 고정 치환 ([http.go:449-463](../internal/mcpserver/http.go#L449-L463)) |
 
-**개선 여지 (Info)**: `/internal/delegations`의 `internal_authentication_required` 반복 실패(공유 비밀 대입 시도)에 대한 별도 경고 집계가 없다. 현재는 일반 요청 로그에 섞인다. L-3의 후속 권고(`delegation_limit` 로깅)와 함께 처리하면 좋다.
+**개선 (I-3, 조치 완료)**: 점검 시점에는 모든 요청 결과가 `Info` 한 수준으로 남아, `internal_authentication_required`(공유 비밀 대입 시도) 같은 흔적이 정상 요청 수만 건에 묻혔다. **경계를 두드린 흔적과 포화만 `Warn`으로 분리**했다 ([http.go `securityFailureCodes`](../internal/mcpserver/http.go)).
+
+| `Warn`으로 올린 코드 | 의미 |
+| --- | --- |
+| `internal_authentication_required` | 서버간 공유 비밀 대입 시도 |
+| `browser_request_denied` | 브라우저 컨텍스트에서 서버간 경로 호출 |
+| `credential_in_payload` | 요청 본문에 자격증명 — 클라이언트 결함 또는 토큰 반사 시도 |
+| `invalid_host` | Host가 loopback이 아님 — DNS rebinding 시도 |
+| `origin_denied`, `preflight_denied` | CORS 우회 시도 |
+| `delegation_limit` | 위임 발급 포화 (전역·사용자별 공통) |
+
+**`Info`로 남긴 것**: `authentication_required`(만료 토큰), `timeout`, `canceled`, `method_not_allowed`, `backend_unavailable`, `global_limit`, `user_limit` 등 정상 운영에서도 발생하는 코드. 흔한 실패를 경고로 올리면 경고 자체가 무의미해진다.
+
+로그 **메시지는 `"HTTP 요청 완료"` 하나로 유지**했다 — 코드별 집계 질의가 갈라지지 않아야 한다. 구분은 수준과 `code` 필드가 한다. 목록 자체를 [audit_level_test.go](../internal/mcpserver/audit_level_test.go)의 `TestSecurityFailureCodesExcludeRoutineFailures`가 양방향으로 고정한다 — "일단 다 경고로 올리자"는 변경을 막는 것이 이 테스트의 목적이다.
 
 ---
 
@@ -410,9 +432,9 @@ OWASP Top 10에는 없으나 MCP 서버의 핵심 위험이라 별도로 점검�
 
 | # | 항목 | 내용 |
 | --- | --- | --- |
-| I-1 | 의존성 갱신 주기 | 간접 의존성 4종이 2~7 마이너 버전 뒤처져 있다. 현재 알려진 취약점은 L-1 하나뿐이나, `govulncheck`를 CI에 포함할 것을 권한다. |
+| I-1 | 의존성 갱신 주기 — **조치 완료** | 간접 의존성 4종이 2~7 마이너 버전 뒤처져 있다(현재 알려진 취약점은 없다). 재발 방지로 CI에 `govulncheck ./...`를 추가했다 — Linux 대표 환경에서 실행하며 **실패 시 빌드를 멈춘다**. 경고로만 남기면 아무도 보지 않는다. |
 | I-2 | ~~`delegation_limit` 테스트 부재~~ | **해소됨.** 점검 시점에는 발급 한도 경로를 덮는 테스트가 없었으나 [limit_test.go](../internal/webdelegation/limit_test.go)로 추가했다 (L-3 조치). |
-| I-3 | 내부 인증 실패 집계 부재 | 공유 비밀 대입 시도가 일반 요청 로그에 섞인다 (A09 개선 여지). |
+| I-3 | ~~내부 인증 실패 집계 부재~~ | **해소됨.** 공유 비밀 대입 시도가 일반 요청 로그에 섞여 있었다. 경계 침입·포화 코드를 `Warn`으로 분리했다 ([A09 절](#a09--security-logging-and-monitoring-failures-white_check_mark-양호) 참조). |
 | I-4 | `.work/` 산출물 | `.work/issue-local-mcp/main.go`, `ableops-go1.25.exe` 등이 작업 디렉터리에 있으나 `.gitignore`로 제외돼 커밋되지 않는다. 점검 범위에서 제외했다. |
 
 **커밋된 민감 파일 점검 결과**: `git ls-files` 기준 자격증명이 담긴 파일은 없다. `.env.example`은 값이 비어 있고, `local.auth-store.example.json`은 `entries: []`이며, `internal/ableops/credentials_test.go`는 합성 테스트 데이터만 쓴다. `.gitignore`가 `.env`, `*.auth-store.json`, `*.mcp-token`, `/.secrets/`를 차단한다.
@@ -425,21 +447,23 @@ OWASP Top 10에는 없으나 MCP 서버의 핵심 위험이라 별도로 점검�
 | --- | --- | --- | --- |
 | :white_check_mark: 완료 | L-3 | `webdelegation.Store.Issue`에 TTL 비례 사용자별 한도 도입 | 코드 ~25줄 |
 | :white_check_mark: 완료 | L-3 | 사용자별 한도 회귀 테스트 4종 추가 | [limit_test.go](../internal/webdelegation/limit_test.go) |
-| 미적용 1 | L-1 | `golang.org/x/sys`를 v0.44.0 이상으로 갱신 | `go get` + 검증 |
-| 미적용 2 | I-3 | `delegation_limit`·`internal_authentication_required` 반복 실패 경고 로깅 | 코드 ~5줄 |
-| 미적용 3 | I-1 | CI에 `govulncheck ./...` 추가 | 워크플로 1줄 |
-| 미적용 4 | L-2 | 운영 배포 시 `localauth` 대신 Managed/위임 경로 사용을 문서에 명시 | [deployment.md](deployment.md) 보강 |
+| :white_check_mark: 완료 | L-1 | `golang.org/x/sys`를 v0.41.0 → v0.48.0 으로 갱신 | `go.mod`/`go.sum` |
+| :white_check_mark: 완료 | I-3 | 경계 침입·포화 실패 코드를 경고 수준으로 분리 로깅 | 코드 ~25줄 + 테스트 5종 |
+| :white_check_mark: 완료 | I-1 | CI에 `govulncheck ./...` 추가 (Linux, 실패 시 빌드 중단) | [ci.yml](../.github/workflows/ci.yml) |
+| 미적용 | L-2 | 운영 배포 시 `localauth` 대신 Managed/위임 경로 사용을 문서에 명시 | [deployment.md](deployment.md) 보강 |
 
 ### 조치 후 재검증
 
 ```
-go build ./...                              통과
-go vet ./...                                통과
-go test ./...                               전체 15개 패키지 통과
-go test ./internal/webdelegation -run PerUser|SingleUser   신규 4개 통과
+go build ./...     통과
+go vet ./...       통과
+go test ./...      전체 15개 패키지 통과
+govulncheck ./...  취약점 0건 (조치 전: import 경로 1건)
 ```
 
-> `-race`는 이 환경에 C 컴파일러가 없어 실행하지 못했다(`cgo: C compiler "gcc" not found`). 신규 코드는 기존 `Issue` 경로의 뮤텍스 안에서만 동작하며 새 공유 상태를 만들지 않는다. CI 등 cgo 사용 가능한 환경에서 `CGO_ENABLED=1 go test ./... -race` 실행을 권한다.
+신규 테스트 9종: [webdelegation/limit_test.go](../internal/webdelegation/limit_test.go) 4종, [mcpserver/audit_level_test.go](../internal/mcpserver/audit_level_test.go) 5종.
+
+> `-race`는 이 점검 환경에 C 컴파일러가 없어 실행하지 못했다(`cgo: C compiler "gcc" not found`). 다만 **CI가 이미 Linux에서 `CGO_ENABLED=1 go test -race`를 `internal/webdelegation`·`internal/mcpserver` 포함해 실행하므로** 별도 조치는 필요하지 않다 ([ci.yml](../.github/workflows/ci.yml) `Check authentication and concurrency races`). 신규 코드는 기존 `Issue`·핸들러 경로의 잠금 안에서만 동작하며 새 공유 상태를 만들지 않는다.
 
 ---
 

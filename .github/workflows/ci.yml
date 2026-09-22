@@ -56,3 +56,13 @@ jobs:
         env:
           CGO_ENABLED: '1'
         run: go test -race ./internal/ableops ./internal/tools ./internal/config ./internal/localauth ./internal/webdelegation ./internal/mcpserver ./internal/openapi ./internal/dynamic ./internal/app ./internal/extension ./cmd/ableops-mcp-auth
+      # 의존성 취약점 점검은 대표 환경 하나에서만 한다. 취약점 DB 는 플랫폼별 정보를 함께 담으므로
+      # (예: windows 전용 항목) Linux 에서 돌려도 다른 OS 대상 항목까지 보고된다.
+      #
+      # ⚠ 실패하면 빌드를 멈춘다. 경고로만 남기면 아무도 보지 않는다. 호출 경로가 없는 항목까지
+      # 막혀 불편하면 그때 -show 로 범위를 좁히되, 기본은 "막는다"로 둔다.
+      - name: Scan dependencies for known vulnerabilities
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          go run golang.org/x/vuln/cmd/govulncheck@latest ./...
