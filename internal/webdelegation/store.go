@@ -38,7 +38,20 @@ const (
 	// MinTTL은 발급 직후 만료되어 쓸 수 없는 설정을 막는 하한이다.
 	MinTTL = time.Minute
 	// maxEntries는 발급 폭주가 프로세스 메모리를 잠식하지 못하게 하는 상한이다.
+	//
+	// ⚠ 이 값만으로는 **공정성**을 지킬 수 없다. 전역 상한 하나뿐이면 한 사용자가 저장소를 다
+	// 채워 다른 모든 사용자의 신규 발급을 막는다. 사용자별 상한은 perUserIssueInterval 을 보라.
 	maxEntries = 4096
+	// perUserIssueInterval은 사용자별 상한을 정하는 기준 발급 간격이다.
+	//
+	// 보유 위임 수는 "발급률 × TTL"로 늘어나므로 사용자별 상한을 상수로 두면 TTL 설정에 따라
+	// 의미가 달라진다. 짧은 TTL 에서는 정상 사용자를 막고, 긴 TTL 에서는 한 사용자가 전역 상한에
+	// 닿기 쉬워진다. 그래서 상한을 개수가 아니라 **지속 발급률**로 정한다 — 이 간격보다 빠르게
+	// 계속 발급하는 사용자만 한도에 닿으며, 그 판정은 TTL 설정과 무관하게 같다.
+	perUserIssueInterval = 5 * time.Second
+	// minEntriesPerUser는 사용자별 상한의 하한이다. TTL 을 최소값으로 둔 배포에서도 재시도·
+	// 병렬 탭 같은 정상 사용이 한도에 닿지 않아야 한다.
+	minEntriesPerUser = 32
 	// maxBackendTokenBytes는 localauth와 같은 Backend 토큰 길이 상한이다.
 	maxBackendTokenBytes = 4096
 )
@@ -75,6 +88,8 @@ type Store struct {
 	entries map[string]entry
 	verify  VerifyBackend
 	ttl     time.Duration
+	// perUser는 사용자 한 명이 동시에 보유할 수 있는 위임 수다. TTL 로부터 기동 시점에 정한다.
+	perUser int
 	now     func() time.Time
 }
 
@@ -89,11 +104,27 @@ func NewStore(verify VerifyBackend, ttl time.Duration) (*Store, error) {
 	if ttl < MinTTL || ttl > MaxTTL {
 		return nil, authError("delegation_unavailable")
 	}
-	return &Store{entries: make(map[string]entry), verify: verify, ttl: ttl, now: time.Now}, nil
+	return &Store{entries: make(map[string]entry), verify: verify, ttl: ttl, perUser: perUserLimit(ttl), now: time.Now}, nil
+}
+
+// perUserLimit은 TTL 에서 사용자별 상한을 정한다.
+//
+// 상한을 TTL 에 비례시키는 이유는 보유 위임 수가 "발급률 × TTL"로 늘기 때문이다. 고정 개수로
+// 두면 같은 발급률이 TTL 설정에 따라 통과하기도, 막히기도 한다. 비례시키면 판정 기준이 언제나
+// "perUserIssueInterval 보다 빠른 지속 발급" 하나로 유지된다.
+func perUserLimit(ttl time.Duration) int {
+	limit := int(ttl / perUserIssueInterval)
+	if limit < minEntriesPerUser {
+		return minEntriesPerUser
+	}
+	return limit
 }
 
 // TTL은 현재 적용 중인 위임 수명이다(설정 확인·응답 메타데이터용).
 func (s *Store) TTL() time.Duration { return s.ttl }
+
+// PerUserLimit은 현재 적용 중인 사용자별 위임 상한이다(설정 확인·시험용).
+func (s *Store) PerUserLimit() int { return s.perUser }
 
 // Issue는 전달받은 Backend 세션 자격증명을 **그대로 신뢰하지 않는다**.
 // 기존 AbleOps Client 로 현재 사용자를 먼저 확인하고, 성공했을 때만 메모리에 등록한다.
@@ -119,7 +150,10 @@ func (s *Store) Issue(ctx context.Context, backendToken string) (Delegation, err
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.purgeExpiredLocked(now)
-	if len(s.entries) >= maxEntries {
+	// 전역 상한은 프로세스 메모리를, 사용자별 상한은 다른 사용자의 발급 가능성을 지킨다.
+	// 둘 다 같은 코드(delegation_limit)로 답한다 — 어느 쪽에 걸렸는지는 호출자에게 알려 줄
+	// 정보가 아니고, 조치(잠시 후 재시도)도 같다.
+	if len(s.entries) >= maxEntries || s.countUserLocked(userID) >= s.perUser {
 		return Delegation{}, authError("delegation_limit")
 	}
 	s.entries[digest(token)] = value
@@ -178,6 +212,22 @@ func (s *Store) Len() int {
 	defer s.mu.Unlock()
 	s.purgeExpiredLocked(s.now().UTC())
 	return len(s.entries)
+}
+
+// countUserLocked는 userID 가 보유한 위임 수다. 호출 전에 purgeExpiredLocked 로 만료분을
+// 지워야 만료된 위임이 한도를 차지하지 않는다.
+//
+// 별도 카운터 맵을 두지 않는 이유는 Issue·Revoke·purge 세 곳과 동기화해야 해 불일치 위험이
+// 오히려 커지기 때문이다. 엔트리는 maxEntries(4096) 이하이고 발급 경로는 이미 Backend 왕복을
+// 한 번 하므로 선형 순회 비용은 무시할 수 있다.
+func (s *Store) countUserLocked(userID string) int {
+	count := 0
+	for _, value := range s.entries {
+		if value.userID == userID {
+			count++
+		}
+	}
+	return count
 }
 
 func (s *Store) purgeExpiredLocked(now time.Time) {
