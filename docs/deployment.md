@@ -4,7 +4,68 @@
 
 이 문서는 **Standalone MCP**(`ableops-kafka-mcp`) 배포만 다룹니다. AbleOps Kafka Core 가 직접 기동하는 **Managed Extension**(`ableops-kafka-mcp-extension`)은 배포 단위가 `dist/` 폴더가 아니라 `.ableops-ext` 설치 패키지이고, `ABLEOPS_BASE_URL`·MCP 토큰·Web Delegation 공유 비밀을 따로 설정하지 않습니다. 패키지 빌드와 서명 정책은 [README 의 Managed Extension 패키지 빌드](../README.md#managed-extension-패키지-빌드)를 보세요.
 
+## 인증 방식 선택 (먼저 읽는다)
+
+배포 형태에 따라 인증 경로가 다르고, **Backend 세션 토큰이 디스크에 남는지가 갈린다**. 아래 표에서 자기 상황을 먼저 고른 뒤 해당 절로 간다.
+
+| 쓰임 | 권고 방식 | 평문 Backend 토큰 | 참고 |
+| --- | --- | --- | --- |
+| AbleOps 포털·Chat 연동 (운영 권장) | **Managed Extension** | **저장소 파일이 없다** | [README 의 Managed Extension 패키지 빌드](../README.md#managed-extension-패키지-빌드) |
+| 포털 연동, Core 가 Managed 를 지원하지 않는 환경 | standalone HTTP + Web Delegation, **빈 인증 저장소** | 없다 (로컬 클라이언트를 등록하지 않으면) | 아래 [Web Delegation 전용 운영](#web-delegation-전용-운영) |
+| Claude Desktop·Codex 등 직접 MCP 클라이언트 | standalone HTTP + `ableops-mcp-auth enroll` | **남는다** | 아래 [로컬 HTTP 인증 등록과 실행](#로컬-http-인증-등록과-실행) |
+
+`ableops-mcp-auth enroll` 로 로컬 클라이언트를 등록하면 그 사용자의 Backend 세션 토큰이 `local.auth-store.json` 에 **평문으로** 저장된다. MCP 토큰을 검증한 뒤 그 세션으로 Backend 를 호출해야 하므로 되돌릴 수 있는 형태여야 하고, 해시로 바꿀 수 없다. 파일은 생성 시점부터 소유자 전용이며(Windows 는 상속 차단 DACL, Linux 는 0600) 매 읽기마다 소유자·권한을 다시 검사해 어긋나면 인증을 거부한다. 그래도 디스크 이미지 백업·파일 동기화 클라이언트·포렌식 복구 경로에는 평문으로 남으므로, **이 방식은 개인 워크스테이션에 한정한다**. 여러 사용자가 쓰는 서버나 공유 호스트에서는 아래 두 방식을 쓴다.
+
+Managed Extension 은 인증 저장소를 **만들지 않는다**. `/mcp` 는 단기 위임 토큰만 받고, 서버간 공유 비밀도 설정이 아니라 프로세스가 기동 시 메모리에만 만든다. 위임은 메모리에만 있고 프로세스가 재시작하면 모두 사라진다(재발급 경로가 항상 있으므로 결함이 아니다).
+
+### Web Delegation 전용 운영
+
+standalone HTTP 는 Web Delegation 을 켜도 **인증 저장소 경로를 반드시 요구한다**. 설정을 비우면 기동하지 않는다. 그래서 "위임 전용" 은 경로를 빼는 방식이 아니라 **등록 항목이 없는 저장소 파일**을 두는 방식으로 만든다. 항목이 없으면 평문 Backend 토큰도 없다.
+
+```json
+{"version":1,"audience":"ableops-kafka-mcp","entries":[]}
+```
+
+[`local.auth-store.example.json`](../local.auth-store.example.json) 이 그 내용이다. **다만 이 파일을 그대로 복사하면 Windows 에서 기동하지 않는다.** 서버는 매 요청 파일의 소유자와 ACL 을 다시 검사하는데, 복사·`Set-Content`·`Copy-Item` 으로 만든 파일은 상위 디렉터리의 DACL 을 **상속**하므로 상속 차단(`SE_DACL_PROTECTED`) 조건을 만족하지 못한다. 등록 CLI 는 생성 시점부터 소유자 전용 ACL 을 직접 걸기 때문에 이 문제가 없다.
+
+두 제약을 함께 지켜야 한다.
+
+1. **파일 ACL**: 소유자가 실행 계정이고, 상속을 끊었으며, 허용 ACE 가 그 계정 하나뿐이어야 한다.
+2. **BOM 금지**: 인증 저장소는 UTF-8 BOM 을 **허용하지 않는다**. YAML 설정 파일은 BOM 을 허용하므로 규칙이 다르다. Windows PowerShell 5.1 의 `Set-Content -Encoding utf8` 은 BOM 을 붙이므로, 그렇게 만든 파일은 원인을 알기 어려운 `authentication_unavailable` 로 기동을 거부당한다.
+
+Windows 에서 두 조건을 만족시키는 방법이다.
+
+```powershell
+$storePath = 'C:\AbleOpsPrivate\local.auth-store.json'
+# BOM 없이 쓴다. Set-Content -Encoding utf8 은 5.1 에서 BOM 을 붙이므로 쓰지 않는다.
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText($storePath, '{"version":1,"audience":"ableops-kafka-mcp","entries":[]}', $utf8NoBom)
+
+# 상속을 끊고 현재 계정만 남긴다. 서버가 매 요청 이 조건을 다시 검사한다.
+$storeSID = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+$storeACL = Get-Acl -Path $storePath
+$storeACL.SetOwner($storeSID)
+$storeACL.SetAccessRuleProtection($true, $false)
+foreach ($rule in @($storeACL.Access)) { $storeACL.RemoveAccessRuleSpecific($rule) | Out-Null }
+$storeACL.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($storeSID, 'FullControl', 'Allow')))
+Set-Acl -Path $storePath -AclObject $storeACL
+```
+
+Linux 는 소유자와 권한만 보므로 더 단순하다.
+
+```bash
+storePath=/opt/ableops-kafka-mcp/private/local.auth-store.json
+printf '%s' '{"version":1,"audience":"ableops-kafka-mcp","entries":[]}' > "$storePath"
+chmod 600 "$storePath"   # 서버는 uid 일치와 group/other 권한 0 을 요구한다
+```
+
+`enroll` 을 실행하지 않는 한 이 저장소에는 평문 Backend 토큰이 생기지 않는다. 이미 등록한 클라이언트가 있다면 `revoke` 가 저장된 Backend 토큰 필드를 즉시 비운다.
+
+포털(AbleOps Kafka) 쪽에는 **추가 설정이 필요하지 않다.** 포털은 Managed 경로를 우선 시도하고 쓸 수 없을 때만 `MCP_DELEGATION_URL` 로 폴백하며, 그 선택을 요청마다 다시 한다. 즉 MCP 를 Managed 로 전환하거나 되돌려도 포털 설정 변경이나 재기동이 필요 없다.
+
 ## 로컬 HTTP 인증 등록과 실행
+
+> 이 절은 **Claude Desktop·Codex 처럼 직접 붙는 MCP 클라이언트**를 위한 방식이다. 등록한 사용자의 Backend 세션 토큰이 평문으로 디스크에 남으므로 개인 워크스테이션에서만 쓴다. 포털 연동이라면 위 [인증 방식 선택](#인증-방식-선택-먼저-읽는다)을 먼저 보라.
 
 이 모드는 OAuth가 아닌 개발용 사용자 매핑이다. 수신은 loopback IP만 허용하며 공용 서비스 인증 완료를 의미하지 않는다. 임의 Authorization Bearer 설정이 가능한 MCP 클라이언트를 사용한다. stdio 실행은 아래 기존 안내를 그대로 따른다.
 

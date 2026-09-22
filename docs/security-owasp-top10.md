@@ -16,12 +16,12 @@
 | Critical | 0 | — |
 | High | 0 | — |
 | Medium | 0 | — |
-| Low | 3 | [L-1](#l-1-golangorgxsys-v0410-의-알려진-취약점-a06--조치-완료) `golang.org/x/sys` 알려진 취약점<br>[L-2](#l-2-localauth-가-backend-세션-토큰을-평문으로-디스크에-보관한다-a02) Backend 토큰 평문 디스크 보관<br>[L-3](#l-3-위임-발급-한도가-사용자별로-나뉘지-않았다-a04--조치-완료) 위임 발급 한도 사용자별 미분배 — **조치 완료** |
+| Low | 3 | [L-1](#l-1-golangorgxsys-v0410-의-알려진-취약점-a06--조치-완료) `golang.org/x/sys` 알려진 취약점<br>[L-2](#l-2-localauth가-backend-세션-토큰을-평문으로-디스크에-보관한다-a02--문서화-조치-완료) Backend 토큰 평문 디스크 보관<br>[L-3](#l-3-위임-발급-한도가-사용자별로-나뉘지-않았다-a04--조치-완료) 위임 발급 한도 사용자별 미분배 — **조치 완료** |
 | Info | 4 | 아래 [5장](#5-정보성-관찰) 참조 |
 
 > **판정 이력**: L-3은 초안에서 Medium(M-1)으로 기재했으나 재검증 후 Low로 하향했다. 근거는 [심각도 재평가](#심각도-재평가-medium--low)에 남긴다.
 
-**총평.** 이 저장소는 MCP 서버로서 드물게 방어적으로 설계돼 있다. 인증 경계 분리(로컬 토큰 / 위임 토큰 / 서버간 공유 비밀), 기본 거부 노출 정책, 자격증명 반사 차단, 오류 원문 비노출이 코드 수준에서 일관되게 구현됐고 테스트로 고정돼 있다. **즉시 악용 가능한 인증 우회·주입·정보 노출 경로는 없다.** Low 3건 중 L-3은 본 점검에서 조치를 완료했고, 나머지 둘은 의존성 갱신과 문서화된 설계 트레이드오프다.
+**총평.** 이 저장소는 MCP 서버로서 드물게 방어적으로 설계돼 있다. 인증 경계 분리(로컬 토큰 / 위임 토큰 / 서버간 공유 비밀), 기본 거부 노출 정책, 자격증명 반사 차단, 오류 원문 비노출이 코드 수준에서 일관되게 구현됐고 테스트로 고정돼 있다. **즉시 악용 가능한 인증 우회·주입·정보 노출 경로는 없다.** Low 3건과 Info 2건은 본 점검에서 모두 조치를 완료했다 — L-1·L-3·I-1·I-3은 코드·CI 변경, L-2는 배포 방식 선택의 문서화다.
 
 ### 검증 실행 결과
 
@@ -29,7 +29,7 @@
 | --- | --- | --- |
 | `go build ./...` | 통과 | 통과 |
 | `go vet ./...` | 통과 | 통과 |
-| `go test ./...` | 15개 패키지 통과 | 15개 패키지 통과 (신규 테스트 9종 포함) |
+| `go test ./...` | 15개 패키지 통과 | 15개 패키지 통과 (신규 테스트 12종 포함) |
 | `govulncheck ./...` | 호출 가능 0건 / import 경로 **1건** | **0건** |
 
 ---
@@ -83,7 +83,7 @@
 
 ---
 
-### A02 — Cryptographic Failures :warning: Low 1건
+### A02 — Cryptographic Failures :warning: Low 1건 (문서화 조치 완료)
 
 | 점검 항목 | 결과 | 근거 |
 | --- | --- | --- |
@@ -95,7 +95,7 @@
 | 비밀 최소 길이 | 양호 | 서버간 공유 비밀 32바이트 미만이면 기동 거부 ([http.go:77-79](../internal/mcpserver/http.go#L77-L79)) |
 | **디스크 저장** | **Low** | **L-2 참조** |
 
-#### L-2. `localauth`가 Backend 세션 토큰을 평문으로 디스크에 보관한다 (A02)
+#### L-2. `localauth`가 Backend 세션 토큰을 평문으로 디스크에 보관한다 (A02) — 문서화 조치 완료
 
 **위치**: [internal/localauth/store.go:55-63](../internal/localauth/store.go#L55-L63)
 
@@ -121,7 +121,33 @@ MCP 토큰은 해시로만 보관하는데, Backend 세션 토큰은 `local.auth
 
 **평가**: 로컬 개발·단일 사용자 워크스테이션 용도에서 파일 권한이 실질적 통제이므로 Low. 다만 디스크 이미지 백업, 파일 동기화 클라이언트, 포렌식 복구 경로에는 평문으로 남는다.
 
-**권고**: 현 설계 유지가 합리적이나, ① 운영 환경 배포 시에는 `localauth` 대신 Managed 모드 / Web 위임 경로(메모리 전용)를 사용하도록 [docs/deployment.md](deployment.md)에 명시하고, ② OS 키체인(Windows DPAPI / macOS Keychain / libsecret) 연동을 로드맵에 둘 것을 권한다.
+##### 적용한 조치 (문서화)
+
+코드 변경 없이 **배포 방식 선택을 문서로 갈랐다**. [deployment.md 「인증 방식 선택」](deployment.md#인증-방식-선택-먼저-읽는다)을 등록 절차보다 앞에 두어, 운영자가 평문 토큰이 남는 방식을 모르고 고르지 않게 했다.
+
+| 쓰임 | 권고 방식 | 평문 Backend 토큰 |
+| --- | --- | --- |
+| 포털·Chat 연동 (운영) | Managed Extension | 저장소 파일이 없다 |
+| 포털 연동, Core 미지원 환경 | standalone + 위임, 빈 저장소 | 없다 (등록하지 않으면) |
+| Claude Desktop·Codex | standalone + `enroll` | **남는다** — 개인 워크스테이션 한정 |
+
+문서화 과정에서 코드를 확인해 **초안의 안내가 틀렸음을 발견하고 바로잡았다.** 처음에는 "예시 파일을 비밀 디렉터리에 복사하라"고 썼는데, 실행해 보니 거부됐다. 원인이 둘이었다.
+
+1. **파일 ACL** — 복사·`Copy-Item`·`Set-Content` 로 만든 파일은 상위 디렉터리 DACL을 **상속**하므로 `SE_DACL_PROTECTED` 조건을 만족하지 못한다 ([private_windows.go:64-67](../internal/localauth/private_windows.go#L64-L67)). 등록 CLI는 `createPrivate`로 생성 시점부터 ACL을 직접 걸어 이 문제가 없다.
+2. **UTF-8 BOM** — 인증 저장소는 BOM을 허용하지 않는데(`readDocument`가 BOM을 떼지 않는다) **YAML 설정 파일은 허용한다**. 규칙이 갈리므로, Windows PowerShell 5.1의 `Set-Content -Encoding utf8`(BOM을 붙인다)로 만든 파일은 원인을 알기 어려운 `authentication_unavailable`로 기동을 거부당한다.
+
+두 제약을 만족하는 PowerShell·Bash 조리법을 문서에 실었고, **실제로 실행해 저장소가 기동을 통과하는 것까지 확인했다.** 제약 자체는 [localauth/empty_store_test.go](../internal/localauth/empty_store_test.go) 3종이 고정한다.
+
+| 테스트 | 고정하는 성질 |
+| --- | --- |
+| `TestEmptyStoreOpensAndRejectsEveryToken` | 빈 저장소로 기동하고 모든 토큰을 거부한다 |
+| `TestExampleStoreContentIsAcceptedWhenWrittenPrivately` | 예시 파일 내용이 유효하다 (문서 안내의 근거) |
+| `TestBOMPrefixedStoreIsRejected` | BOM이 붙으면 거부된다 (문서 경고의 근거) |
+
+**후속 권고 (미적용)**
+- OS 키체인(Windows DPAPI / macOS Keychain / libsecret) 연동을 로드맵에 둔다. 그러면 `enroll` 경로에서도 평문 저장이 사라진다.
+- 인증 저장소도 YAML 설정과 같이 BOM을 허용하거나, 최소한 오류 코드를 갈라 원인을 알 수 있게 한다. 지금은 권한 문제와 형식 문제가 같은 `authentication_unavailable`이다.
+- `ableops-mcp-auth`에 저장소 초기화 명령(`init` 등)을 더한다. 현재는 빈 저장소를 만들려면 운영자가 ACL과 인코딩을 직접 맞춰야 한다.
 
 ---
 
@@ -450,7 +476,11 @@ OWASP Top 10에는 없으나 MCP 서버의 핵심 위험이라 별도로 점검�
 | :white_check_mark: 완료 | L-1 | `golang.org/x/sys`를 v0.41.0 → v0.48.0 으로 갱신 | `go.mod`/`go.sum` |
 | :white_check_mark: 완료 | I-3 | 경계 침입·포화 실패 코드를 경고 수준으로 분리 로깅 | 코드 ~25줄 + 테스트 5종 |
 | :white_check_mark: 완료 | I-1 | CI에 `govulncheck ./...` 추가 (Linux, 실패 시 빌드 중단) | [ci.yml](../.github/workflows/ci.yml) |
-| 미적용 | L-2 | 운영 배포 시 `localauth` 대신 Managed/위임 경로 사용을 문서에 명시 | [deployment.md](deployment.md) 보강 |
+| :white_check_mark: 완료 | L-2 | 배포별 인증 방식 선택과 위임 전용 운영 절차를 문서화 | [deployment.md](deployment.md) + 테스트 3종 |
+
+**후속 과제 (미적용)**: L-2의 OS 키체인 연동, 인증 저장소 BOM 허용 또는 오류 코드 분리, `ableops-mcp-auth`의 저장소 초기화 명령. 모두 [L-2 후속 권고](#l-2-localauth가-backend-세션-토큰을-평문으로-디스크에-보관한다-a02--문서화-조치-완료)에 정리했다.
+
+**kadmin(AbleOps Kafka) 영향 없음.** L-2 조치가 배포 권고인 만큼 백엔드 쪽 변경이 필요한지 함께 확인했다. 필요 없다 — ① kadmin 전체에 `localauth`·`MCP_AUTH_STORE`·`ableops_mcp_` 참조가 0건이고 `ableops_web_`(위임)만 쓴다, ② Managed Provider가 v1.8.3에 이미 구현돼 있고 선택 순서가 이 권고와 같으며 그 선택을 **요청마다** 다시 한다(`internal/mcpdelegation/router.go`), ③ `/internal/delegations` 경로·헤더·본문·응답 계약에 변화가 없다. 즉 MCP를 Managed로 전환하거나 되돌려도 kadmin 설정 변경이나 재기동이 필요 없다.
 
 ### 조치 후 재검증
 
@@ -461,7 +491,7 @@ go test ./...      전체 15개 패키지 통과
 govulncheck ./...  취약점 0건 (조치 전: import 경로 1건)
 ```
 
-신규 테스트 9종: [webdelegation/limit_test.go](../internal/webdelegation/limit_test.go) 4종, [mcpserver/audit_level_test.go](../internal/mcpserver/audit_level_test.go) 5종.
+신규 테스트 12종: [webdelegation/limit_test.go](../internal/webdelegation/limit_test.go) 4종, [mcpserver/audit_level_test.go](../internal/mcpserver/audit_level_test.go) 5종, [localauth/empty_store_test.go](../internal/localauth/empty_store_test.go) 3종.
 
 > `-race`는 이 점검 환경에 C 컴파일러가 없어 실행하지 못했다(`cgo: C compiler "gcc" not found`). 다만 **CI가 이미 Linux에서 `CGO_ENABLED=1 go test -race`를 `internal/webdelegation`·`internal/mcpserver` 포함해 실행하므로** 별도 조치는 필요하지 않다 ([ci.yml](../.github/workflows/ci.yml) `Check authentication and concurrency races`). 신규 코드는 기존 `Issue`·핸들러 경로의 잠금 안에서만 동작하며 새 공유 상태를 만들지 않는다.
 
