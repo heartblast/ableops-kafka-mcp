@@ -177,7 +177,9 @@ MCP 서버는 LLM이 제어하는 인자를 REST 경로로 옮기므로 이 항�
 | --- | --- | --- |
 | 응답 크기 제한 | 양호 | REST 2MiB, 샘플 256KiB, MCP 출력 64KiB / 결과 128KiB ([client.go:24](../internal/ableops/client.go#L24), [result.go:86-92](../internal/tools/result.go#L86-L92)) |
 | 잘림 표시 | 양호 | 부분 결과를 조작하지 않고 `truncated` + `limitations`로 명시 ([result.go:152-178](../internal/tools/result.go#L152-L178)) |
-| 동시성 제한 | 양호 | 전역 32 / 사용자별 4 / REST 4 ([http.go:86-91](../internal/mcpserver/http.go#L86-L91), [client.go:26](../internal/ableops/client.go#L26)) |
+| 동시성 제한 | 양호 | 전역 32 / 사용자별 4 / REST 4 ([http.go](../internal/mcpserver/http.go), [client.go:26](../internal/ableops/client.go#L26)) |
+| 빈도 제한 | 양호 | 사용자별 분당 240회, 피어 IP별 인증 실패 분당 20회, 키 상한 4096 ([ratelimit.go](../internal/mcpserver/ratelimit.go)) |
+| 프록시 경유 차단 | 양호 | 프록시 헤더·비loopback 피어를 fail-closed로 403 ([proxy_guard.go](../internal/mcpserver/proxy_guard.go)) |
 | 타임아웃 | 양호 | 요청 30s, 헤더 5s, 읽기 10s, idle 60s, 쓰기 idle 10s, 종료 5s |
 | 메시지 본문 노출 | 양호 | `SampleMessage`가 key/value/header를 **구조적으로** 제외, 기본 비활성 + 와일드카드 없는 정확 토픽 허용목록 ([data_operations.go:77-98](../internal/ableops/data_operations.go#L77-L98)) |
 | 반쪽 배선 거부 | 양호 | 비밀만 있고 발급기가 없거나 그 반대면 기동 거부 ([http.go:72-76](../internal/mcpserver/http.go#L72-L76)) |
@@ -370,7 +372,9 @@ go mod tidy
 
 **Managed 모드 인증 경계.** `/mcp`가 위임 토큰 **하나만** 받는다. 형식이 다르면 저장소에 묻지도 않고, `AuthCode`를 달지 않아 기대 토큰 형식을 응답으로 알려주지 않는다 ([app.go:198-219](../internal/app/app.go#L198-L219)).
 
-**무차별 대입.** 인증 실패에 대한 잠금·백오프가 없으나, 토큰이 256비트 난수이고 loopback 전용이며 전역 동시성이 32로 제한되므로 실효 위험은 무시 가능하다.
+**무차별 대입.** 피어 IP별 인증 실패 빈도 제한(기본 분당 20회)을 둔다. 소진한 피어는 인증기를 부르기도 전에 429다. 자격증명 불일치(401/403)만 세므로 Backend 장애나 타임아웃 중에 정상 클라이언트가 잠기지 않는다. 동시성 제한은 "같은 순간에 몇 개"만 보므로 순차 반복 대입은 막지 못했고, 이 제한이 그 축을 담당한다 ([ratelimit.go](../internal/mcpserver/ratelimit.go)).
+
+**Reverse Proxy 경유 노출.** 서버는 loopback에서만 수신하지만, 프록시가 `127.0.0.1:8081`로 전달하면 서버가 보는 연결은 여전히 loopback이라 Host·Origin 검사로는 잡히지 않는다. 그래서 `Forwarded`·`X-Forwarded-*`·`X-Real-IP`·`Via` 등 프록시 헤더가 하나라도 있으면 경로 분기 이전에 403으로 거부하고, loopback이 아닌 피어의 연결도 거부한다. `/internal/delegations`도 예외가 아니다 — 이 경로는 공유 비밀만으로 위임 토큰을 내주므로 외부 노출이 곧 토큰 유출이다 ([proxy_guard.go](../internal/mcpserver/proxy_guard.go)).
 
 ---
 
@@ -414,7 +418,7 @@ go mod tidy
 | `origin_denied`, `preflight_denied` | CORS 우회 시도 |
 | `delegation_limit` | 위임 발급 포화 (전역·사용자별 공통) |
 
-**`Info`로 남긴 것**: `authentication_required`(만료 토큰), `timeout`, `canceled`, `method_not_allowed`, `backend_unavailable`, `global_limit`, `user_limit` 등 정상 운영에서도 발생하는 코드. 흔한 실패를 경고로 올리면 경고 자체가 무의미해진다.
+**`Info`로 남긴 것**: `authentication_required`(만료 토큰), `timeout`, `canceled`, `method_not_allowed`, `backend_unavailable`, `global_limit`, `user_limit`, `user_rate_limit` 등 정상 운영에서도 발생하는 코드. 흔한 실패를 경고로 올리면 경고 자체가 무의미해진다.
 
 로그 **메시지는 `"HTTP 요청 완료"` 하나로 유지**했다 — 코드별 집계 질의가 갈라지지 않아야 한다. 구분은 수준과 `code` 필드가 한다. 목록 자체를 [audit_level_test.go](../internal/mcpserver/audit_level_test.go)의 `TestSecurityFailureCodesExcludeRoutineFailures`가 양방향으로 고정한다 — "일단 다 경고로 올리자"는 변경을 막는 것이 이 테스트의 목적이다.
 

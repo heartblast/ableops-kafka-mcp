@@ -23,6 +23,10 @@ import (
 )
 
 const syntheticMCPToken = "synthetic-mcp-token-a"
+
+// loopbackPeerAddr는 loopback 피어를 흉내 낸다. httptest.NewRequest 의 기본 RemoteAddr 는
+// 문서용 외부 대역이라 프록시 경유 방어에 걸린다.
+const loopbackPeerAddr = "127.0.0.1:54321"
 const syntheticBackendToken = "synthetic-backend-token-a"
 
 func httpTestOptions() HTTPOptions {
@@ -44,6 +48,8 @@ func emptyMCPServer() *mcp.Server {
 
 func postRequest(body string) *http.Request {
 	r := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:8081/mcp", strings.NewReader(body))
+	// 피어는 loopback 이어야 한다 — httptest 기본값(192.0.2.1)은 외부 피어로 거부된다.
+	r.RemoteAddr = loopbackPeerAddr
 	r.Header.Set("Authorization", "Bearer "+syntheticMCPToken)
 	r.Header.Set("Content-Type", "application/json")
 	r.Header.Set("Accept", "application/json, text/event-stream")
@@ -106,6 +112,7 @@ func TestHTTPAuthenticationOriginAndLimits(t *testing.T) {
 	}
 	for _, path := range []string{"/healthz", "/readyz"} {
 		r := httptest.NewRequest(http.MethodGet, "http://localhost"+path, nil)
+		r.RemoteAddr = loopbackPeerAddr
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, r)
 		if w.Code != 200 || w.Body.String() != "ok\n" {
@@ -113,6 +120,7 @@ func TestHTTPAuthenticationOriginAndLimits(t *testing.T) {
 		}
 	}
 	r := httptest.NewRequest(http.MethodOptions, "http://localhost/mcp", nil)
+	r.RemoteAddr = loopbackPeerAddr
 	r.Header.Set("Origin", "http://localhost:3000")
 	r.Header.Set("Access-Control-Request-Method", "POST")
 	r.Header.Set("Access-Control-Request-Headers", "authorization, content-type, mcp-protocol-version")

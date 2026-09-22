@@ -119,6 +119,7 @@ func TestNewHTTPHandlerWithoutListener(t *testing.T) {
 		t.Fatal(err)
 	}
 	health := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8081/healthz", nil)
+	health.RemoteAddr = "127.0.0.1:54321"
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, health)
 	if recorder.Code != http.StatusOK {
@@ -126,6 +127,7 @@ func TestNewHTTPHandlerWithoutListener(t *testing.T) {
 	}
 	// 인증 경계는 그대로다 — 토큰 없는 /mcp 는 401 이다.
 	anonymous := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:8081/mcp", strings.NewReader("{}"))
+	anonymous.RemoteAddr = "127.0.0.1:54321"
 	recorder = httptest.NewRecorder()
 	handler.ServeHTTP(recorder, anonymous)
 	if recorder.Code != http.StatusUnauthorized {
@@ -133,6 +135,7 @@ func TestNewHTTPHandlerWithoutListener(t *testing.T) {
 	}
 	// 위임 발급을 켜지 않았으므로 서버간 경로는 존재하지 않는다(404).
 	internal := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:8081/internal/delegations", strings.NewReader("{}"))
+	internal.RemoteAddr = "127.0.0.1:54321"
 	internal.Header.Set("Authorization", "Bearer "+token)
 	recorder = httptest.NewRecorder()
 	handler.ServeHTTP(recorder, internal)
