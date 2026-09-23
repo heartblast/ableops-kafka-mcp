@@ -66,8 +66,8 @@ var staticProfiles = map[string]StaticProfile{
 	},
 	"get_consumer_group_lag": {
 		Operations: []string{"getConsumerGroupLag"},
-		Output:     []string{"partitions[].clientHost 제거", "목록 limit 절단"},
-		Semantic:   []string{"group·ProbeStatus 대조", "found=false·FORBIDDEN·UNAVAILABLE·오류 파티션을 error/partial로 판정"},
+		Output:     []string{"partitions[].clientHost 제거", "topic_name 지정 시 partitions·topicLag를 limit 전에 Topic으로 절단(topicFilter)", "목록 limit 절단"},
+		Semantic:   []string{"group·ProbeStatus 대조", "found=false·FORBIDDEN·UNAVAILABLE·오류 파티션을 error/partial로 판정", "Topic 파티션 없음을 topic_not_found로 그룹 미존재와 구분"},
 		Security:   []string{"partitions[].error·실패 reasons의 Kafka 오류 원문을 고정 문구로 치환"},
 	},
 	"get_consumer_group_members": {

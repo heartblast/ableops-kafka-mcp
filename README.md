@@ -73,7 +73,7 @@ dist/
 | | Standalone MCP | AbleOps Managed Extension |
 | --- | --- | --- |
 | 바이너리 | `ableops-kafka-mcp` | `ableops-kafka-mcp-extension` |
-| 배포 단위 | `dist/<os>-<arch>/` 폴더 | `ableops-kafka-mcp_0.6.0.ableops-ext` 패키지 |
+| 배포 단위 | `dist/<os>-<arch>/` 폴더 | `ableops-kafka-mcp_0.6.2.ableops-ext` 패키지 |
 | 대상 | Claude Desktop·Codex 등 외부 MCP Client | AbleOps Kafka Core |
 | 전송 | stdio(기본) 또는 loopback Streamable HTTP | Core 가 기동하는 random loopback listener |
 | 프로세스 관리 | 사용자·MCP Client | Core 가 lifecycle 관리 |
@@ -97,7 +97,7 @@ bash ./scripts/build-extension.sh
 두 스크립트는 같은 구조의 패키지를 만들고, 만든 직후 스스로 검증합니다(ZIP 형식·최상위 항목 규칙·Manifest 일치·바이너리 존재·Standalone 바이너리와 민감 파일 미포함). 결과는 다음과 같습니다.
 
 ```text
-dist/extensions/ableops-kafka-mcp_0.6.0.ableops-ext
+dist/extensions/ableops-kafka-mcp_0.6.2.ableops-ext
   manifest.yaml
   bin/linux-amd64/ableops-kafka-mcp-extension
   bin/windows-amd64/ableops-kafka-mcp-extension.exe
@@ -225,7 +225,7 @@ $env:ABLEOPS_API_TOKEN = [System.Net.NetworkCredential]::new('', $sessionSecret)
 | `get_cluster_health` | `cluster_id` | 연결 상태와 파티션 건강 상태를 각각 조회하여 조합 |
 | `list_topics` | `cluster_id` | DB 토픽 스냅샷 |
 | `list_consumer_groups` | `cluster_id` | DB Consumer Group 스냅샷 |
-| `get_consumer_group_lag` | `cluster_id`, `group_name` | 그룹의 실시간 파티션 Lag·Offset과 백엔드 상태 |
+| `get_consumer_group_lag` | `cluster_id`, `group_name` | 그룹의 실시간 파티션 Lag·Offset과 백엔드 상태. 선택 `topic_name`으로 한 Topic만(limit 전 필터, v0.6.2) |
 | `list_cluster_events` | `cluster_id` | 저장된 이벤트의 페이지 조회 |
 | `get_topic_detail` | `cluster_id`, `topic_name` | 토픽 기본·소유 메타. `include:["configs","partitions"]`로 공개 설정·라이브 복제 상태 선택 |
 | `get_consumer_group_members` | `cluster_id`, `group_name` | 멤버·클라이언트·호스트·토픽/파티션 할당 |
@@ -233,11 +233,11 @@ $env:ABLEOPS_API_TOKEN = [System.Net.NetworkCredential]::new('', $sessionSecret)
 | `get_asset_impact` | `cluster_id`, `asset_type`, `asset_key` | 방향과 관계 유형을 보존한 그래프. `include:["impact"]`로 별도 영향 요약 선택 |
 | `get_request_status` | `cluster_id`, `request_id` | 원본 신청 상태·정책 코드·대상. `include:["history"]`로 최근 상태 이력 공개 |
 
-v0.2.0에서 추가한 22개 도구의 필수 인자·권한·질문 예시·제약은 기능군별 문서에 정리했습니다.
+v0.2.0에서 추가한 22개 도구와 v0.6.2의 `get_consumer_target_throughput`(Consumer Group × Topic 처리량·처리상태·재조정 상관·추이, REST 3회)의 필수 인자·권한·질문 예시·제약은 기능군별 문서에 정리했습니다.
 
 | 기능군 | 추가 도구 | 상세 계약 |
 | --- | --- | --- |
-| Lag·모니터링 | `get_consumer_lag_overview`, `get_consumer_lag_policy`, `get_metric_series`, `get_cluster_storage`, `get_cluster_config_audit`, `get_partition_reassignments` | [모니터링](docs/monitoring-tools.md) |
+| Lag·모니터링 | `get_consumer_lag_overview`, `get_consumer_lag_policy`, `get_metric_series`, `get_cluster_storage`, `get_cluster_config_audit`, `get_partition_reassignments`, `get_consumer_target_throughput` | [모니터링](docs/monitoring-tools.md) |
 | 계정·보안·신청 | `list_identities`, `get_identity_detail`, `list_acls`, `get_acl_risk`, `get_scram_audit`, `list_requests` | [보안·통제](docs/security-tools.md) |
 | 이벤트·정책 | `get_event_summary`, `list_operational_issues`, `get_event_rule`, `get_attention_policy`, `list_maintenance_windows` | [이벤트](docs/event-tools.md) |
 | 백업·샘플·미리보기 | `list_resource_backups`, `sample_topic_messages`, `preview_acl_plan`, `preview_flink_acl_plan`, `preview_flink_ddl` | [데이터·미리보기](docs/data-tools.md) |

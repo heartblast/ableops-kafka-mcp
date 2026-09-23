@@ -15,6 +15,14 @@ type GroupInput struct {
 	Limit     int    `json:"limit,omitempty"`
 }
 
+// GroupLagInput은 get_consumer_group_lag 입력이다. topic_name은 선택이며 생략하면 그룹 전체를 반환한다.
+type GroupLagInput struct {
+	ClusterID string `json:"cluster_id"`
+	GroupName string `json:"group_name"`
+	TopicName string `json:"topic_name,omitempty"`
+	Limit     int    `json:"limit,omitempty"`
+}
+
 type EventsInput struct {
 	ClusterID        string   `json:"cluster_id"`
 	Page             int      `json:"page,omitempty"`

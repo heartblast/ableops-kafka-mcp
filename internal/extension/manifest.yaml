@@ -6,7 +6,7 @@
 apiVersion: ableops.io/extension/v1
 id: ableops-kafka-mcp
 name: AbleOps Kafka MCP
-version: 0.6.0
+version: 0.6.2
 description: AbleOps Kafka REST 계약을 MCP 도구로 노출하는 Managed Process Extension
 publisher: AbleOps
 

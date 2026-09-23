@@ -299,7 +299,7 @@ func TestSDKHTTPInitializationAndRepresentativeTools(t *testing.T) {
 	defer server.Close()
 	session := sdkHTTPSession(t, server, syntheticMCPToken)
 	list, err := session.ListTools(context.Background(), nil)
-	if err != nil || len(list.Tools) != 33 {
+	if err != nil || len(list.Tools) != 34 {
 		t.Fatalf("도구 목록 오류: %v", err)
 	}
 	for _, tool := range list.Tools {

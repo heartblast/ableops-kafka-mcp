@@ -109,7 +109,7 @@ func TestToolSchemasAndRequiredTargets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(listed.Tools) != 33 {
+	if len(listed.Tools) != 34 {
 		t.Fatalf("도구 수=%d", len(listed.Tools))
 	}
 	for _, tool := range listed.Tools {

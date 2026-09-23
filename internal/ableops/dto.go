@@ -142,6 +142,9 @@ type ConsumerGroupLagView struct {
 	Partitions            []PartitionLag   `json:"partitions"`
 	Thresholds            LagThresholds    `json:"thresholds"`
 	CheckedAt             string           `json:"checkedAt"`
+	// TopicFilter는 MCP가 topic_name으로 partitions·topicLag를 좁혔을 때의 Topic이다(백엔드 필드가 아니다).
+	// 비어 있으면 그룹 전체 결과다. 좁혀도 totalLag 등 그룹 집계 필드는 그룹 전체 값이다.
+	TopicFilter string `json:"topicFilter,omitempty"`
 }
 
 type GroupCoordinator struct {

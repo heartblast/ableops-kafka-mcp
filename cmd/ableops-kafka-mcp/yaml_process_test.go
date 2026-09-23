@@ -336,7 +336,7 @@ func yamlWaitHTTP(t *testing.T, ctx context.Context, endpoint string, stderr *ya
 func yamlAssertToolsAndCluster(t *testing.T, ctx context.Context, session *mcp.ClientSession, wantID string) {
 	t.Helper()
 	list, err := session.ListTools(ctx, nil)
-	if err != nil || len(list.Tools) != 33 {
+	if err != nil || len(list.Tools) != 34 {
 		t.Fatal("공식 SDK의 11개 도구 목록 확인 실패")
 	}
 	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "list_clusters", Arguments: map[string]any{}})

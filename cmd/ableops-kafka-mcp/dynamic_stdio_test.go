@@ -20,8 +20,8 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// staticToolCount는 Static 도구 수다(v0.2.0 기준 33개). Dynamic 도구는 여기에 더해진다.
-const staticToolCount = 33
+// staticToolCount는 Static 도구 수다(v0.2.0 기준 33개, v0.6.2 get_consumer_target_throughput 추가로 34개). Dynamic 도구는 여기에 더해진다.
+const staticToolCount = 34
 
 // lockedBuffer는 자식 프로세스 stderr 수집과 테스트 읽기를 직렬화한다.
 type lockedBuffer struct {

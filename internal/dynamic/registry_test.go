@@ -20,7 +20,7 @@ func names(list []*Tool) []string {
 
 func TestBuildUpstreamRegistryWithStaticTools(t *testing.T) {
 	static := tools.StaticNames()
-	if len(static) != 33 {
+	if len(static) != 34 {
 		t.Fatalf("static=%v", static)
 	}
 	registry, err := Build(fixtureContract(t), Options{StaticToolNames: static})

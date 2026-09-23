@@ -373,7 +373,7 @@ REST 경로가 계약에서 바뀌어도 `operationId`가 같으면 MCP 도구 �
 | `get_cluster_health` | INPUT · OUTPUT · SEMANTIC · SECURITY | `cluster_id`↔`id` / Static은 `getClusterHealth`+`getClusterPartitionHealth` 합성 / 오류 원문 치환, BLOCKED |
 | `list_topics` | INPUT · OUTPUT · SEMANTIC | `cluster_id`·`limit`↔`id` / `configs` 제거 / `syncedAt=null`→`partial`, clusterId 대조 |
 | `list_consumer_groups` | INPUT · OUTPUT · SEMANTIC | `cluster_id`↔`id` / `topicLag` 절단·봉투 / `syncedAt=null` 판정 (Static 큰 정수 반올림 결함 별도) |
-| `get_consumer_group_lag` | INPUT · OUTPUT · SEMANTIC · SECURITY | `group_name`↔`name` / `clientHost` 제거 / `found=false`·FORBIDDEN 판정 / Kafka 오류 원문 치환 |
+| `get_consumer_group_lag` | INPUT · OUTPUT · SEMANTIC · SECURITY | `group_name`↔`name`·`topic_name` 출력 필터 / `clientHost` 제거·Topic 절단 / `found=false`·FORBIDDEN·`topic_not_found` 판정 / Kafka 오류 원문 치환 |
 | `get_consumer_group_members` | INPUT · OUTPUT · SEMANTIC · SECURITY | 입력 이름 / 절단·해석 제한 / null·빈 memberId 거부 / 경로 특수문자 사전 거부 |
 | `list_cluster_events` | INPUT · OUTPUT · SEMANTIC · SECURITY | `page_size`↔`pageSize`, Dynamic에만 있는 무시되는 `clusterId` 쿼리 등 / `evidence`·실행 링크 제거 / 항목 clusterId 대조 |
 | `get_asset_impact` | INPUT · OUTPUT · SEMANTIC | `asset_type`·`asset_key`↔`type`·`key` / Static은 `getAssetGraph` 선조회 후 영향 요약 옵트인 / 그래프 오류로 `partial` 판정 |

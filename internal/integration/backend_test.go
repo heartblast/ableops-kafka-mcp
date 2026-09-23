@@ -72,7 +72,7 @@ func TestBackendLive(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), cfg.Timeout)
 			defer cancel()
 			inventory, err := cs.ListTools(ctx, nil)
-			if err != nil || inventory == nil || len(inventory.Tools) != 33 {
+			if err != nil || inventory == nil || len(inventory.Tools) != 34 {
 				t.Fatal("공식 SDK 도구 목록 조회 실패")
 			}
 			for _, tool := range inventory.Tools {

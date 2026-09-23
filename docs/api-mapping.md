@@ -158,6 +158,8 @@ HTTP 200에도 `FORBIDDEN`, `UNAVAILABLE`이 가능하며, 그룹 없음은 **`f
 
 서버 페이지·정렬·필터는 없다. MCP 출력에서 상세를 자르더라도 원본 전체 집계를 유지하고 잘림을 명시한다.
 
+v0.6.2의 선택 인자 `topic_name`은 **MCP 출력 필터**다. 백엔드 경로·쿼리는 그대로이며(Topic 쿼리 파라미터 없음) 그룹 전체를 받은 뒤 `partitions[]`·`topicLag[]`를 그 Topic으로 좁히고 나서 `limit`을 적용한다. 그룹 집계 필드는 그룹 전체 값이다. 상세는 [모니터링](monitoring-tools.md#get_consumer_group_lag의-topic_name-v062).
+
 ### `list_cluster_events`
 
 응답은 `{items: EventView[], total, page, pageSize}`이며 저장소 사건 기록이다. 이벤트 수집원을 이 호출이 직접 실행하지 않는다. 수집기 상태와 전체 수집 최신성은 이 API만으로 확인할 수 없다.
@@ -378,3 +380,19 @@ upstream 계약이 바뀌면 같은 방법으로 다시 만들고 다음을 함�
 - **Backend 결함 비보정**: 요청서가 열거한 여섯 결함(`failedBrokers` nil, storage 실패 사유 손실, Lag 전면 실패의 `200 + []`, 이벤트 저장소 오류의 404 접힘, `getCluster` RBAC 비대칭, Request 정렬 차이)은 Dynamic에서 보정하지 않는다. 원문과 HTTP 상태를 그대로 전달하고 판정 필드를 만들지 않는다. `getClusterStorage`는 `x-mcp-enabled=false`라 도구가 만들어지지 않는다.
 - **경로 디코딩**: Dynamic은 `/`·`;`·`,`가 든 그룹명·토픽명도 인코딩해서 보낸다. upstream 라우터가 인코딩된 조각을 어떻게 복원하는지는 계약에 명시되어 있지 않다(Static 멤버 도구는 같은 이유로 호출 전에 거부한다). 앞 절의 Backend 개선 후보와 같다.
 - **servers 해석**: 계약이 `servers[0].url="/"`를 보장하므로 설정한 `ABLEOPS_BASE_URL`만 쓴다. 다른 값이 오면 계약 전체를 거부한다.
+
+## v0.6.2 Consumer Group × Topic 처리량 도구
+
+`get_consumer_target_throughput`은 다음 세 REST 계약을 순서대로 한 번씩 호출한다. 모두 `clusterAdapterOr(..., topic.view)` 클러스터 스코프 권한이며 새 권한은 없다.
+
+| 순서 | 메서드와 경로 | 백엔드 근거 | MCP 투영 |
+| --- | --- | --- | --- |
+| 1 | `GET /api/clusters/{id}/consumer-lag/throughput` | `internal/server/consumer_throughput.go:clusterConsumerThroughput`, `internal/domain/throughput.go` | `clusterId` 대조, `targets[]`에서 group·topic 정확 일치 1건. RateStatus·ProcessingState enum과 `MEASURED ⇔ value 존재` 규약 검증 |
+| 2 | `GET /api/clusters/{id}/consumer-lag/throughput/history?group=&topic=&range=` | `clusterConsumerThroughputHistory`, `internal/throughput/history.go:ParseHistoryRange`, `internal/domain/throughput_history.go` | `clusterId`·`group`·`topic`·`range` 대조, 단위(`msg/s`/`messages`)·비실측 계열 점 없음 검증 |
+| 3 | `GET /api/clusters/{id}/consumer-lag` | `internal/domain/consumer_lag.go`(`ConsumerLagTarget.rebalanceCorrelation`·`ConsumerLagGroup.rebalance`), `internal/domain/rebalance.go` | 그룹 행·대상 행의 재조정 필드만 읽는다. 상관 enum 검증 |
+
+- 백엔드 기간은 `5m`·`15m`(기본)·`1h`·`6h`이고 버킷은 21·31·61·73개다. 백엔드는 미지원 값을 `15m`으로 정규화하므로 MCP가 enum으로 먼저 거부한다.
+- 현재값 경로는 Lag 관측(`lag.OverviewReport`)을 재사용한다. 따라서 `/consumer-lag`와 같은 부작용(최초 자산 스냅샷 저장)과 포털 샘플러 표본 축적이 있을 수 있어 annotation은 `readOnlyHint=false`·`idempotentHint=false`·`destructiveHint=false`다.
+- 백엔드는 비실측 사유·수집 경로 경고에 Prometheus 오류 원문(`err.Error()`)을 붙이고, 진단용 PromQL(`query`)을 싣는다. MCP는 `query`를 선언하지 않고 사유·경고를 상태별 고정 문구로 바꾼다.
+- 참조: 로컬 Core 저장소 `kafka-control-portal` `main` HEAD `96a4470`(v1.8.3 병합). 확인 시 미커밋 변경은 AI 어시스트 Phase 4B(Registry·Prompt·UI)이며 위 세 핸들러·도메인 파일에는 없다.
+- 검증: `internal/tools/throughput_test.go`가 `httptest`와 공식 SDK 클라이언트로 Schema·정확 스코프·현재값/시계열 상태·재조정 상태·부분 실패·민감정보 제거·취소 전달·`topic_name` 필터를 검증한다. 실제 Backend·Prometheus 실연동은 수행하지 않았다.
