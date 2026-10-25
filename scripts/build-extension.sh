@@ -275,6 +275,44 @@ while IFS= read -r name; do
 done <<< "$ENTRIES"
 ok "민감 파일·소스 미포함"
 
+# 6-7) bin/ 항목에 POSIX 실행 비트가 실렸는가.
+#
+# zip(1) 로 만들면 chmod 가 그대로 실리므로 보통 통과한다. 그래도 검사하는 이유는 **패키징 도구가
+# 바뀌어도 이 성질이 유지되는지**를 여기서 확인하기 위해서다(bsdtar/tar 폴백, 다른 호스트).
+# 실행 비트가 없으면 Core 는 설치본을 0600 으로 쓰고(pkgfile.go) 기동 후보에서 제외한다
+# (process.go) — 설치는 성공으로 표시되고 상태만 DEGRADED 가 되어 늦게 드러난다.
+# 판정을 세 값으로 좁혀 돌려준다 — unzip 의 심볼릭 권한과 python 의 8진수를 호출부에서
+# 각각 해석하면 한쪽 형식만 맞는 조건이 조용히 통과한다.
+zip_entry_exec() { # <항목 이름> → "exec" | "noexec" | "nonunix"
+    if command -v unzip >/dev/null 2>&1; then
+        unzip -Z -- "$PKG_PATH" "$1" | awk 'NR==1 {
+            if ($3 != "unx") { print "nonunix" }
+            else if ($1 ~ /x/) { print "exec" }
+            else { print "noexec" }
+        }'
+    else
+        python3 - "$PKG_PATH" "$1" <<'PY'
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1]) as z:
+    info = z.getinfo(sys.argv[2])
+    # create_system 3 = Unix. Unix 가 아니면 상위 16비트는 권한이 아니다.
+    if info.create_system != 3:
+        print("nonunix")
+    else:
+        print("exec" if (info.external_attr >> 16) & 0o111 else "noexec")
+PY
+    fi
+}
+while IFS= read -r name; do
+    [[ "$name" == bin/* ]] || continue
+    case "$(zip_entry_exec "$name")" in
+        exec) ;;
+        nonunix) die "ZIP 호스트가 Unix 가 아니어서 POSIX 권한이 무시됩니다: $name" ;;
+        *) die "실행 비트가 없습니다(Linux 에서 기동하지 못합니다): $name" ;;
+    esac
+done <<< "$ENTRIES"
+ok "bin/ 실행 비트(POSIX)"
+
 # --- 7) 요약 ----------------------------------------------------------------
 step "패키지 내용"
 while IFS= read -r name; do printf '    %s\n' "$name"; done <<< "$ENTRIES"

@@ -94,7 +94,7 @@ bash ./scripts/build-extension.sh
 .\scripts\build-extension.ps1
 ```
 
-두 스크립트는 같은 구조의 패키지를 만들고, 만든 직후 스스로 검증합니다(ZIP 형식·최상위 항목 규칙·Manifest 일치·바이너리 존재·Standalone 바이너리와 민감 파일 미포함). 결과는 다음과 같습니다.
+두 스크립트는 같은 구조의 패키지를 만들고, 만든 직후 스스로 검증합니다(ZIP 형식·최상위 항목 규칙·Manifest 일치·바이너리 존재·`bin/` 항목의 POSIX 실행 비트·Standalone 바이너리와 민감 파일 미포함). 결과는 다음과 같습니다.
 
 ```text
 dist/extensions/ableops-kafka-mcp_0.6.0.ableops-ext
