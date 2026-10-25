@@ -30,7 +30,11 @@ jobs:
         run: |
           status=0
           while IFS= read -r f; do
-            LC_ALL=C grep -q $'[^ -~\t]' "$f" || continue
+            # ⚠ CR 을 먼저 버린다. .ps1 은 .gitattributes 때문에 CRLF 로 체크아웃되고, Linux 의
+            #   grep 은 줄 내용 끝에 남은 \r 까지 본다. 그 \r 이 아래 패턴에 매치되므로, CR 을
+            #   지우지 않으면 **모든** .ps1 이 "비ASCII 있음" 으로 판정되어 순수 ASCII 파일까지
+            #   BOM 을 요구하게 된다(의도는 한글 등이 든 파일만 검사하는 것이다).
+            tr -d '\r' < "$f" | LC_ALL=C grep -q $'[^ -~\t]' || continue
             if [ "$(head -c 3 "$f" | od -An -tx1 | tr -d ' ')" != "efbbbf" ]; then
               echo "::error file=$f::비ASCII 문자가 있는 PowerShell 스크립트에 UTF-8 BOM 이 없습니다."
               status=1
