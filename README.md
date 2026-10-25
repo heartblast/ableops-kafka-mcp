@@ -94,7 +94,7 @@ bash ./scripts/build-extension.sh
 .\scripts\build-extension.ps1
 ```
 
-두 스크립트는 같은 구조의 패키지를 만들고, 만든 직후 스스로 검증합니다(ZIP 형식·최상위 항목 규칙·Manifest 일치·바이너리 존재·Standalone 바이너리와 민감 파일 미포함). 결과는 다음과 같습니다.
+두 스크립트는 같은 구조의 패키지를 만들고, 만든 직후 스스로 검증합니다(ZIP 형식·최상위 항목 규칙·Manifest 일치·바이너리 존재·`bin/` 항목의 POSIX 실행 비트·Standalone 바이너리와 민감 파일 미포함). 결과는 다음과 같습니다.
 
 ```text
 dist/extensions/ableops-kafka-mcp_0.6.0.ableops-ext
@@ -118,7 +118,7 @@ signatureMode=warn     → unsigned 설치 가능 + 경고 (Core 기본값)
 signatureMode=require  → 서명된 package 필요
 ```
 
-`require` 환경에 배포할 때는 AbleOps 공식 signing tool 로 서명합니다. 서명 포맷(Ed25519 · `META-INF/ableops-signature.json`)은 Core 검증기와 한 글자라도 어긋나면 통과하지 못하므로 이 저장소에서 독자 구현하지 않습니다.
+`require` 환경에 배포할 때는 AbleOps 공식 signing tool 로 서명합니다. 서명 포맷(Ed25519 · `META-INF/ableops-signature.json`)은 Core 검증기와 한 글자라도 어긋나면 통과하지 못하므로 이 저장소에서 독자 구현하지 않습니다. 키 생성부터 공개키 등록까지의 절차는 [Extension 패키지 서명](docs/extension-signing.md)에 정리했습니다.
 
 ## 설정과 실행
 

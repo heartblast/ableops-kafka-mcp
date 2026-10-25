@@ -1,4 +1,4 @@
-# =============================================================================
+﻿# =============================================================================
 # AbleOps Kafka MCP — Managed Extension 패키지(*.ableops-ext) 빌드 (PowerShell · Windows).
 #
 # scripts/build-extension.sh 의 PowerShell 대응본이다. **같은 구조의 패키지**를 만든다.
@@ -44,6 +44,68 @@ $forbiddenPatterns = @('*.auth-store.json', '*auth-store*', '*.mcp-token', '*cre
 function Write-Step { param([string]$Message) Write-Host "==> $Message" -ForegroundColor Cyan }
 function Write-Ok { param([string]$Message) Write-Host "    OK  $Message" -ForegroundColor Green }
 function Write-Note { param([string]$Message) Write-Host "    $Message" -ForegroundColor Yellow }
+
+# ZIP 중앙 디렉터리 레코드를 읽는다(이름·레코드 위치·호스트·POSIX 모드).
+#
+# 왜 .NET ZipArchive 로 읽지 않는가: ZipArchiveEntry 는 "version made by" 의 **호스트 바이트**를
+# 노출하지 않는다. 그런데 POSIX 권한이 읽히느냐는 전적으로 그 바이트에 달려 있다(아래 참조).
+# 그것을 보지 못하면 권한이 실린 패키지와 아닌 패키지를 구분할 수 없다.
+function Read-ZipCentralDirectory {
+    param([byte[]]$Bytes)
+
+    # EOCD(0x06054b50)를 끝에서부터 찾는다. ZIP 주석이 없으면 마지막 22바이트가 EOCD 다.
+    $eocd = -1
+    for ($i = $Bytes.Length - 22; $i -ge 0; $i--) {
+        if ($Bytes[$i] -eq 0x50 -and $Bytes[$i + 1] -eq 0x4B -and
+            $Bytes[$i + 2] -eq 0x05 -and $Bytes[$i + 3] -eq 0x06) { $eocd = $i; break }
+    }
+    if ($eocd -lt 0) { throw 'ZIP 끝 레코드(EOCD)를 찾지 못했습니다.' }
+
+    $count = [System.BitConverter]::ToUInt16($Bytes, $eocd + 10)
+    $offset = [System.BitConverter]::ToUInt32($Bytes, $eocd + 16)
+
+    $records = @()
+    for ($n = 0; $n -lt $count; $n++) {
+        if ($Bytes[$offset] -ne 0x50 -or $Bytes[$offset + 1] -ne 0x4B -or
+            $Bytes[$offset + 2] -ne 0x01 -or $Bytes[$offset + 3] -ne 0x02) {
+            throw "ZIP 중앙 디렉터리 레코드가 손상되었습니다(항목 $n)."
+        }
+        $nameLen = [System.BitConverter]::ToUInt16($Bytes, $offset + 28)
+        $extraLen = [System.BitConverter]::ToUInt16($Bytes, $offset + 30)
+        $commentLen = [System.BitConverter]::ToUInt16($Bytes, $offset + 32)
+        $records += [pscustomobject]@{
+            Name       = [System.Text.Encoding]::UTF8.GetString($Bytes, $offset + 46, $nameLen)
+            Offset     = $offset
+            HostSystem = $Bytes[$offset + 5]          # version made by 의 상위 바이트(3=Unix, 0=FAT)
+            UnixMode   = ($Bytes[$offset + 41] -shl 8) -bor $Bytes[$offset + 40]
+        }
+        $offset += 46 + $nameLen + $extraLen + $commentLen
+    }
+    return $records
+}
+
+# ZIP 에 POSIX 권한을 기록한다 — 호스트를 Unix 로 바꾸고 모드 비트를 채운다.
+#
+# ⚠ ExternalAttributes 만 설정해서는 **아무 효과가 없다.** 읽는 쪽(Go 의 archive/zip, unzip, Core
+#   의 internal/extensionhost/pkgfile.go)은 "version made by" 의 호스트가 Unix(3)일 때만 external
+#   attributes 의 상위 16비트를 POSIX 모드로 해석하고, FAT 이면 MS-DOS 속성으로 읽어 권한 비트를
+#   통째로 버린다. Windows 의 .NET 은 그 바이트를 언제나 FAT(0) 으로 쓰고 바꿀 API 를 주지 않는다.
+#   그래서 중앙 디렉터리를 직접 고친다.
+#
+# ⚠ external attributes 의 **하위 16비트는 그대로 둔다** — MS-DOS 속성 영역이라, 호스트를 Unix 로
+#   보지 않는 도구가 읽을 때 쓰인다.
+function Set-ZipUnixMode {
+    param([string]$Path, [string]$ExecPrefix = 'bin/')
+
+    $bytes = [System.IO.File]::ReadAllBytes($Path)
+    foreach ($record in (Read-ZipCentralDirectory -Bytes $bytes)) {
+        $mode = if ($record.Name.StartsWith($ExecPrefix)) { 0x81ED } else { 0x81A4 } # 0100755 / 0100644
+        $bytes[$record.Offset + 5] = 3                                  # version made by: Unix
+        $bytes[$record.Offset + 40] = [byte]($mode -band 0xFF)          # external attrs 상위 16비트 =
+        $bytes[$record.Offset + 41] = [byte](($mode -shr 8) -band 0xFF) #   POSIX 모드
+    }
+    [System.IO.File]::WriteAllBytes($Path, $bytes)
+}
 
 Push-Location $projectRoot
 try {
@@ -151,12 +213,8 @@ try {
         foreach ($file in (Get-ChildItem -LiteralPath $stage -Recurse -File | Sort-Object FullName)) {
             $rel = $file.FullName.Substring($stage.Length + 1) -replace '\\', '/'
             $entry = $zip.CreateEntry($rel, [System.IO.Compression.CompressionLevel]::Optimal)
-            # bin/ 항목에 POSIX 실행 비트를 남긴다. Core 는 해제 시 권한을 직접 정하므로 설치에는
-            # 영향이 없지만, 패키지를 손으로 풀어 쓰는 Linux 쪽에서 chmod 를 다시 하지 않아도 된다.
-            # (ExternalAttributes 는 PowerShell 5.1 의 .NET Framework 에 없을 수 있어 방어한다.)
-            if ($rel.StartsWith('bin/') -and ($entry.PSObject.Properties.Name -contains 'ExternalAttributes')) {
-                $entry.ExternalAttributes = 0x81ED0000  # 0100755 << 16
-            }
+            # POSIX 권한은 여기서 넣지 않는다 — .NET 이 호스트를 FAT 으로 쓰는 한 ExternalAttributes
+            # 를 채워도 읽는 쪽이 통째로 무시한다. zip 을 닫은 뒤 Set-ZipUnixMode 가 기록한다.
             $entryStream = $entry.Open()
             try {
                 $fileStream = [System.IO.File]::OpenRead($file.FullName)
@@ -166,6 +224,10 @@ try {
     } finally {
         $zip.Dispose()
     }
+    # bin/ 아래 실행 파일에 POSIX 실행 비트를 심는다. 이것이 빠지면 Core 가 설치본을 0600 으로
+    # 쓰고(pkgfile.go), 기동 단계에서 "이 플랫폼용 실행 파일 없음" 으로 넘어간다 — 설치는
+    # 성공했다고 표시되므로 Linux 에 배포하기 전까지 드러나지 않는다.
+    Set-ZipUnixMode -Path $pkgPath
     Write-Ok $pkgPath
 
     # --- 6) 패키지 자체 검증 ------------------------------------------------
@@ -250,6 +312,22 @@ try {
         }
     }
     Write-Ok '민감 파일·소스 미포함'
+
+    # 6-7) bin/ 항목에 POSIX 실행 비트가 실렸는가.
+    #
+    # 이 검사가 없으면 Windows 빌드는 Linux 에서 기동하지 못하는 패키지를 "검증 통과" 로 내보낸다.
+    # Core 는 실행 비트가 있는 bin/ 항목만 0750 으로 쓰고(pkgfile.go), 실행 비트 없는 파일은
+    # 기동 후보에서 제외한다(process.go) — 설치는 성공하고 상태만 DEGRADED 가 된다.
+    foreach ($record in (Read-ZipCentralDirectory -Bytes ([System.IO.File]::ReadAllBytes($pkgPath)))) {
+        if (-not $record.Name.StartsWith('bin/')) { continue }
+        if ($record.HostSystem -ne 3) {
+            throw "ZIP 호스트가 Unix 가 아니어서 POSIX 권한이 무시됩니다: $($record.Name)"
+        }
+        if (($record.UnixMode -band 0x49) -eq 0) {   # 0o111 — 소유자·그룹·기타 실행 비트
+            throw "실행 비트가 없습니다(Linux 에서 기동하지 못합니다): $($record.Name)"
+        }
+    }
+    Write-Ok 'bin/ 실행 비트(POSIX)'
 
     # --- 7) 요약 ------------------------------------------------------------
     Write-Step '패키지 내용'

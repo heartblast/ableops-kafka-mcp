@@ -1,5 +1,27 @@
 # 구현 검증 기록
 
+## PowerShell 스크립트 인코딩 규칙 고정
+
+검증일: 2026-09-22. 환경은 **Windows 11, Go 1.27.1, Windows PowerShell 5.1**이다.
+
+`.\scripts\build-extension.ps1` 실행이 구문 오류로 실패했다. 원인은 스크립트 로직이 아니라 파일 인코딩이다. 해당 파일이 BOM 없는 UTF-8로 저장되어 있었고, Windows PowerShell 5.1은 BOM이 없는 `.ps1`을 시스템 ANSI 코드페이지(이 환경은 cp949)로 읽는다. 한글 주석·문자열의 바이트가 깨지면서 그 안에 `(`, `)`, `"`가 섞여 들어갔고 파서가 문자열 종결자를 찾지 못해 연쇄 구문 오류가 발생했다. 같은 문제는 `auth-init.ps1`에서 이미 한 번 확인된 적이 있다.
+
+비ASCII 문자가 있는 `scripts/build-extension.ps1`, `scripts/build.ps1`, `scripts/verify-backend.ps1`에 UTF-8 BOM을 추가했다. `scripts/test.ps1`은 ASCII 전용이라 변경하지 않았다. 재발 방지를 위해 세 곳에 규칙을 고정했다.
+
+- `.editorconfig`: `[*.ps1]`에 `charset = utf-8-bom`, `end_of_line = crlf`를 지정해 편집기 저장 시점에 BOM을 유지한다.
+- `.gitattributes`: `*.ps1 text eol=crlf`로 줄바꿈만 고정한다. 인코딩 변환(`working-tree-encoding`)은 걸지 않았다 — Git 2.53에서 `UTF-8BOM` 지정 시 `failed to encode ... from UTF-8BOM to UTF-8`로 add 자체가 실패했다. 변환 없이 두면 BOM 바이트가 내용 그대로 보존된다.
+- `.github/workflows/ci.yml`: checkout 직후 Linux 러너에서 추적 중인 `.ps1` 중 비ASCII 문자가 있는데 BOM이 없는 파일을 찾아 실패시킨다.
+
+| 검증 | 이번 실행 결과 |
+| --- | --- |
+| `Parser::ParseFile`(`scripts/build-extension.ps1`) | 구문 오류 0건 |
+| `.\scripts\build-extension.ps1` | 통과. linux/amd64·windows/amd64 교차 컴파일, 스테이지 규칙·패키지 검증까지 완료 |
+| BOM 라운드트립(`git add` → 삭제 → `git checkout`) | index blob과 체크아웃 결과 모두 `efbbbf` 유지 |
+| CI 검사 스크립트 로직 | 현재 트리에서 통과. `build.ps1`의 BOM을 임시로 제거하면 해당 파일을 지목하며 실패 |
+| `go test ./...`, `go vet ./...`, `go build ./cmd/ableops-kafka-mcp` | 통과 |
+
+Go 소스는 변경하지 않았다. 패키징 산출물 `dist/extensions/ableops-kafka-mcp_0.6.0.ableops-ext`는 이번 실행으로 다시 생성되었다.
+
 ## v0.2.0 운영·보안·데이터 확장 검증
 
 검증일: 2026-09-16. 현재 환경은 **macOS arm64, Go 1.26.5**다. 아래 Windows/다른 Go 버전 결과는 이전 작업의 이력이며 이번 실행 결과로 해석하지 않는다.
