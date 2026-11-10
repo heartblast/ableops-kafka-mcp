@@ -7,11 +7,6 @@ on:
 permissions:
   contents: read
 
-# AbleOps SDK(github.com/heartblast/ableops-sdk)는 비공개 저장소다. 공개 모듈 프록시가
-# 받아올 수 없으므로 GOPRIVATE 로 직접 조회 경로를 쓰고, 아래 단계에서 자격증명을 건다.
-env:
-  GOPRIVATE: github.com/heartblast/*
-
 jobs:
   verify:
     strategy:
@@ -45,13 +40,6 @@ jobs:
         with:
           go-version: ${{ matrix.go }}
           cache: true
-      # ⚠ ABLEOPS_SDK_TOKEN 은 ableops-sdk 읽기 권한이 있는 토큰이어야 한다
-      #   (기본 GITHUB_TOKEN 은 다른 저장소에 접근하지 못한다).
-      - name: Configure private AbleOps SDK module access
-        shell: bash
-        env:
-          SDK_TOKEN: ${{ secrets.ABLEOPS_SDK_TOKEN }}
-        run: git config --global url."https://x-access-token:${SDK_TOKEN}@github.com/heartblast/".insteadOf "https://github.com/heartblast/"
       - run: go mod verify
       - name: Test, vet and build
         shell: pwsh
